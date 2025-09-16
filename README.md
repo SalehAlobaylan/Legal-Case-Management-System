@@ -1,4 +1,4 @@
-﻿# Regulation_Change_Monitor
+﻿# Legal-Case-Management-System
 
 ## Tech Stack
 
@@ -8,4 +8,5 @@
   <img src="https://skillicons.dev/icons?i=postgres" alt="PostgreSQL" height="50" />
   <img src="https://skillicons.dev/icons?i=docker" alt="Docker" height="50" />
 </p>
+
 
