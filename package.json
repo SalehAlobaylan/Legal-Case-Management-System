@@ -4,7 +4,11 @@
   "description": "<p align=\"left\">\r   <img src=\"https://skillicons.dev/icons?i=react\" alt=\"React\" height=\"50\" />\r   <img src=\"https://skillicons.dev/icons?i=nestjs\" alt=\"Nest.js\" height=\"50\" />\r   <img src=\"https://skillicons.dev/icons?i=postgres\" alt=\"PostgreSQL\" height=\"50\" />\r   <img src=\"https://skillicons.dev/icons?i=docker\" alt=\"Docker\" height=\"50\" />\r </p>",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start:prod": "node dist/server.js"
   },
   "keywords": [],
   "author": "",
@@ -13,10 +17,17 @@
     "@fastify/cors": "^11.1.0",
     "@fastify/jwt": "^10.0.0",
     "@fastify/swagger": "^9.5.2",
-    "fastify": "^5.6.1"
+    "drizzle-orm": "^0.38.3",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.6.1",
+    "postgres": "^3.4.5",
+    "pino": "^9.4.0",
+    "pino-pretty": "^11.2.2",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^24.9.2",
+    "drizzle-kit": "^0.24.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }
