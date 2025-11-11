@@ -17,6 +17,7 @@
     "@fastify/cors": "^11.1.0",
     "@fastify/jwt": "^10.0.0",
     "@fastify/swagger": "^9.5.2",
+    "bcrypt": "^5.1.1",
     "drizzle-orm": "^0.38.3",
     "dotenv": "^16.4.5",
     "fastify": "^5.6.1",
@@ -28,6 +29,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.9.2",
+    "@types/bcrypt": "^5.0.2",
     "drizzle-kit": "^0.24.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
