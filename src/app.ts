@@ -13,6 +13,7 @@ export function buildApp(opts = {}) {
   // Register plugins
   app.register(cors);
   app.register(jwt, { secret: process.env.JWT_SECRET || 'supersecret' });
+  app.register(import('./plugins/database'));
   app.register(swagger, {
     openapi: {
       info: {
