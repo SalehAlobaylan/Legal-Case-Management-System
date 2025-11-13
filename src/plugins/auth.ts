@@ -1,14 +1,17 @@
 import { FastifyPluginAsync, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { UnauthorizedError } from "../utils/errors";
+import "@fastify/jwt";
 
 declare module "fastify" {
   interface FastifyInstance {
     authenticate: (request: FastifyRequest) => Promise<void>;
   }
+}
 
-  interface FastifyRequest {
-    user?: {
+declare module "@fastify/jwt" {
+  interface FastifyJWT {
+    user: {
       id: number;
       email: string;
       role: string;
@@ -32,5 +35,3 @@ export default fp(authPlugin, {
   name: "auth",
   dependencies: ["jwt"],
 });
-
-
