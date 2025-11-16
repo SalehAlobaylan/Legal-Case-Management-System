@@ -2,32 +2,6 @@
 
 A simple backend API for managing legal cases and regulations. Built with Fastify (TypeScript), PostgreSQL, and Drizzle ORM. It includes JWT authentication and optional AI-assisted links between cases and regulations.
 
-
-### Tech stack
-
-<p align="left">
-  <img src="https://img.shields.io/badge/Fastify-000000?style=for-the-badge&logo=fastify&logoColor=white" alt="Fastify" />
-  <img src="https://img.shields.io/badge/Drizzle-C5F74F?style=for-the-badge&logo=drizzle&logoColor=black" alt="Drizzle" />
-
-<img src="https://skillicons.dev/icons?i=redis" 
-  alt="Redis" height="50" />
-<img src="https://skillicons.dev/icons?i=postgres" 
-  alt="PostgreSQL" height="50" />
-<img src="https://skillicons.dev/icons?i=docker" 
-  alt="Docker" height="50" />
-
-</p>
-
-- Fastify + TypeScript
-- Drizzle ORM + PostgreSQL
-- Zod for input validation
-- JWT authentication
-- Pino logger
-- Swagger UI (`/docs`)
-- CORS, rate limit, and global error handler
-
-
-
 ### Features
 - Authentication (JWT)
 - Case CRUD
@@ -40,12 +14,10 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 ### Quick start
 ```bash
 npm install
-npm run dev        
+npm run dev        # start in watch mode
 # or
 npm run build && npm run start:prod
 ```
-
-</p>
 
 Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before starting.
 
@@ -56,6 +28,14 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 ### Notes
 - API docs available at `/docs` when the server is running.
 
+### Tech stack
+- Fastify + TypeScript
+- Drizzle ORM + PostgreSQL
+- Zod for input validation
+- JWT authentication
+- Pino logger
+- Swagger UI (`/docs`)
+- CORS, rate limit, and global error handler
 
 ### Environment
 - `DATABASE_URL`: PostgreSQL connection string

@@ -1,6 +1,5 @@
 // src/app.ts
 import Fastify from 'fastify';
-import swagger from '@fastify/swagger';
 import jwt from '@fastify/jwt';
 import cors from '@fastify/cors';
 
@@ -16,14 +15,7 @@ export function buildApp(opts = {}) {
   app.register(import('./plugins/auth'));
   app.register(import('./plugins/database'));
   app.register(import('./plugins/error-handler'));
-  app.register(swagger, {
-    openapi: {
-      info: {
-        title: 'Legal Case Management API',
-        version: '1.0.0'
-      }
-    }
-  });
+  app.register(import('./plugins/swagger'));
 
   // Register routes
 //   app.register(import('./routes/auth'), { prefix: '/api/auth' });
