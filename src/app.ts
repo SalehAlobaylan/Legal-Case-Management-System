@@ -15,6 +15,7 @@ export function buildApp(opts = {}) {
   app.register(jwt, { secret: process.env.JWT_SECRET || 'supersecret' });
   app.register(import('./plugins/auth'));
   app.register(import('./plugins/database'));
+  app.register(import('./plugins/error-handler'));
   app.register(swagger, {
     openapi: {
       info: {
