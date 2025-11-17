@@ -54,8 +54,3 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `POST /api/ai-links/:caseId/generate` — AI suggestions (protected)
 - `GET /api/ai-links/:caseId` — list links (protected)
 
-### Scripts
-- `npm run dev`: start dev server (watch)
-- `npm run build`: compile TypeScript
-- `npm run start:prod`: run compiled server
-- `npm run lint`: type-check
