@@ -22,12 +22,9 @@ export function buildApp(opts = {}) {
   app.register(import("./plugins/swagger"));
 
   // Register routes
-  //   app.register(import('./routes/cases'), { prefix: '/api/cases' });
-//   app.register(import('./routes/regulations'), { prefix: '/api/regulations' });
   app.register(import("./routes/auth"), { prefix: "/api/auth" });
-  // app.register(import("./routes/cases"), { prefix: "/api/cases" });
+  app.register(import("./routes/cases"), { prefix: "/api/cases" });
   // app.register(import("./routes/regulations"), { prefix: "/api/regulations" });
 
   return app;
 }
-
