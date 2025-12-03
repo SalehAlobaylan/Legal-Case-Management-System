@@ -12,7 +12,12 @@
  *   include basic OpenAPI/Swagger metadata (tags, descriptions, security).
  */
 
-import { FastifyPluginAsync } from "fastify";
+import {
+  FastifyInstance,
+  FastifyPluginAsync,
+  FastifyRequest,
+  FastifySchema,
+} from "fastify";
 import {
   createCaseHandler,
   deleteCaseHandler,
@@ -21,9 +26,15 @@ import {
   updateCaseHandler,
 } from "./handlers";
 
+type AuthenticatedFastifyInstance = FastifyInstance & {
+  authenticate: (request: FastifyRequest) => Promise<void>;
+};
+
 const casesRoutes: FastifyPluginAsync = async (fastify) => {
+  const app = fastify as AuthenticatedFastifyInstance;
+
   // All routes require authentication via JWT
-  fastify.addHook("onRequest", fastify.authenticate);
+  app.addHook("onRequest", app.authenticate);
 
   // POST /api/cases
   // - Creates a new case in the authenticated user's organization.
@@ -35,9 +46,9 @@ const casesRoutes: FastifyPluginAsync = async (fastify) => {
         description: "Create a new case",
         tags: ["cases"],
         security: [{ bearerAuth: [] }],
-      },
+      } as FastifySchema,
     },
-    createCaseHandler
+    createCaseHandler as any
   );
 
   // GET /api/cases
@@ -50,9 +61,9 @@ const casesRoutes: FastifyPluginAsync = async (fastify) => {
         description: "Get all cases for organization",
         tags: ["cases"],
         security: [{ bearerAuth: [] }],
-      },
+      } as FastifySchema,
     },
-    getCasesHandler
+    getCasesHandler as any
   );
 
   // GET /api/cases/:id
@@ -64,9 +75,9 @@ const casesRoutes: FastifyPluginAsync = async (fastify) => {
         description: "Get case by ID",
         tags: ["cases"],
         security: [{ bearerAuth: [] }],
-      },
+      } as FastifySchema,
     },
-    getCaseByIdHandler
+    getCaseByIdHandler as any
   );
 
   // PUT /api/cases/:id
@@ -79,9 +90,9 @@ const casesRoutes: FastifyPluginAsync = async (fastify) => {
         description: "Update case",
         tags: ["cases"],
         security: [{ bearerAuth: [] }],
-      },
+      } as FastifySchema,
     },
-    updateCaseHandler
+    updateCaseHandler as any
   );
 
   // DELETE /api/cases/:id
@@ -94,12 +105,10 @@ const casesRoutes: FastifyPluginAsync = async (fastify) => {
         description: "Delete case",
         tags: ["cases"],
         security: [{ bearerAuth: [] }],
-      },
+      } as FastifySchema,
     },
-    deleteCaseHandler
+    deleteCaseHandler as any
   );
 };
 
 export default casesRoutes;
-
-

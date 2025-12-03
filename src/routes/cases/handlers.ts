@@ -8,7 +8,7 @@
  *   (`fastify.authenticate`) and use the user's organization id to enforce access control.
  */
 
-import { FastifyReply, FastifyRequest } from "fastify";
+import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { CaseService } from "../../services/case.service";
 import {
   CreateCaseInput,
@@ -18,6 +18,19 @@ import {
   getCasesQuerySchema,
   updateCaseSchema,
 } from "./schemas";
+import type { Database } from "../../db/connection";
+
+type RequestWithUserAndDb = FastifyRequest & {
+  user: {
+    id: number;
+    email: string;
+    role: string;
+    orgId: number;
+  };
+  server: FastifyInstance & {
+    db: Database;
+  };
+};
 
 /*
  * createCaseHandler
@@ -28,22 +41,23 @@ import {
  * - Calls `CaseService.createCase` and returns a `201` response with `{ case }`.
  */
 export async function createCaseHandler(
-  request: FastifyRequest<{ Body: CreateCaseInput }>,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const data = createCaseSchema.parse(request.body);
+  const { body, user, server } = request as RequestWithUserAndDb;
+  const data = createCaseSchema.parse(body as CreateCaseInput);
 
-  const caseService = new CaseService(request.server.db);
+  const caseService = new CaseService(server.db);
   const newCase = await caseService.createCase(
     {
       ...data,
-      organizationId: request.user!.orgId,
+      organizationId: user.orgId,
       // `filingDate` is stored as a DATE string in the database, so we keep it as-is
       // (or set it to null) instead of converting to a JavaScript Date.
       filingDate: data.filingDate ?? null,
       nextHearing: data.nextHearing ? new Date(data.nextHearing) : undefined,
     },
-    request.user!.id
+    user.id
   );
 
   return reply.code(201).send({ case: newCase });
@@ -58,18 +72,19 @@ export async function createCaseHandler(
  *   organization and returns `{ cases }`.
  */
 export async function getCasesHandler(
-  request: FastifyRequest<{ Querystring: GetCasesQuery }>,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const filters = getCasesQuerySchema.parse(request.query);
+  const { query, user, server } = request as RequestWithUserAndDb;
+  const filters = getCasesQuerySchema.parse(query as GetCasesQuery);
 
-  const caseService = new CaseService(request.server.db);
-  const cases = await caseService.getCasesByOrganization(
-    request.user!.orgId,
+  const caseService = new CaseService(server.db);
+  const casesList = await caseService.getCasesByOrganization(
+    user.orgId,
     filters
   );
 
-  return reply.send({ cases });
+  return reply.send({ cases: casesList });
 }
 
 /*
@@ -80,13 +95,16 @@ export async function getCasesHandler(
  *   current user's organization, and returns `{ case }`.
  */
 export async function getCaseByIdHandler(
-  request: FastifyRequest<{ Params: { id: string } }>,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const id = parseInt(request.params.id, 10);
+  const { params, user, server } = request as RequestWithUserAndDb & {
+    params: { id: string };
+  };
+  const id = parseInt(params.id, 10);
 
-  const caseService = new CaseService(request.server.db);
-  const case_ = await caseService.getCaseById(id, request.user!.orgId);
+  const caseService = new CaseService(server.db);
+  const case_ = await caseService.getCaseById(id, user.orgId);
 
   return reply.send({ case: case_ });
 }
@@ -101,14 +119,17 @@ export async function getCaseByIdHandler(
  * - Returns the updated case in `{ case }`.
  */
 export async function updateCaseHandler(
-  request: FastifyRequest<{ Params: { id: string }; Body: UpdateCaseInput }>,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const id = parseInt(request.params.id, 10);
-  const data = updateCaseSchema.parse(request.body);
+  const { params, body, user, server } = request as RequestWithUserAndDb & {
+    params: { id: string };
+  };
+  const id = parseInt(params.id, 10);
+  const data = updateCaseSchema.parse(body as UpdateCaseInput);
 
-  const caseService = new CaseService(request.server.db);
-  const updated = await caseService.updateCase(id, request.user!.orgId, {
+  const caseService = new CaseService(server.db);
+  const updated = await caseService.updateCase(id, user.orgId, {
     ...data,
     // Keep `filingDate` as a DATE string (or null) to match the Drizzle column type
     filingDate: data.filingDate ?? null,
@@ -127,13 +148,16 @@ export async function updateCaseHandler(
  * - Returns a `204 No Content` response on success.
  */
 export async function deleteCaseHandler(
-  request: FastifyRequest<{ Params: { id: string } }>,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
-  const id = parseInt(request.params.id, 10);
+  const { params, user, server } = request as RequestWithUserAndDb & {
+    params: { id: string };
+  };
+  const id = parseInt(params.id, 10);
 
-  const caseService = new CaseService(request.server.db);
-  await caseService.deleteCase(id, request.user!.orgId);
+  const caseService = new CaseService(server.db);
+  await caseService.deleteCase(id, user.orgId);
 
   return reply.code(204).send();
 }
