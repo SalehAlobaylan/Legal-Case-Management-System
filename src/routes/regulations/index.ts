@@ -108,5 +108,3 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
 };
 
 export default regulationsRoutes;
-
-

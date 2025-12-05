@@ -25,6 +25,7 @@ export function buildApp(opts = {}) {
   app.register(import("./routes/auth"), { prefix: "/api/auth" });
   app.register(import("./routes/cases"), { prefix: "/api/cases" });
   app.register(import("./routes/regulations"), { prefix: "/api/regulations" });
+  app.register(import("./routes/ai-links"), { prefix: "/api/ai-links" });
 
   return app;
 }
