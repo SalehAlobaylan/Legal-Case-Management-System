@@ -8,6 +8,7 @@ import {
   timestamp,
   uniqueIndex,
   index,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { cases } from "./cases";
@@ -32,7 +33,7 @@ export const caseRegulationLinks = pgTable(
       .default("ai")
       .notNull(),
     verified: boolean("verified").default(false).notNull(),
-    verifiedBy: integer("verified_by").references(() => users.id, {
+    verifiedBy: uuid("verified_by").references(() => users.id, {
       onDelete: "set null",
     }),
     verifiedAt: timestamp("verified_at"),

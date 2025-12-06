@@ -12,7 +12,7 @@ declare module "fastify" {
 declare module "@fastify/jwt" {
   interface FastifyJWT {
     user: {
-      id: number;
+      id: string;
       email: string;
       role: string;
       orgId: number;

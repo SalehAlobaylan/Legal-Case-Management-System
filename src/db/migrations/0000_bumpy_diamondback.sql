@@ -9,7 +9,7 @@ CREATE TABLE "organizations" (
 );
 --> statement-breakpoint
 CREATE TABLE "users" (
-	"id" serial PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" integer NOT NULL,
 	"email" varchar(255) NOT NULL,
 	"password_hash" varchar(255) NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE "cases" (
 	"case_type" varchar(100) NOT NULL,
 	"status" varchar(50) DEFAULT 'open' NOT NULL,
 	"client_info" text,
-	"assigned_lawyer_id" integer,
+	"assigned_lawyer_id" uuid,
 	"court_jurisdiction" varchar(255),
 	"filing_date" date,
 	"next_hearing" timestamp,
@@ -71,7 +71,7 @@ CREATE TABLE "case_regulation_links" (
 	"similarity_score" numeric(5, 4),
 	"method" varchar(20) DEFAULT 'ai' NOT NULL,
 	"verified" boolean DEFAULT false NOT NULL,
-	"verified_by" integer,
+	"verified_by" uuid,
 	"verified_at" timestamp,
 	"created_at" timestamp DEFAULT now() NOT NULL
 );

@@ -7,6 +7,7 @@ import {
   date,
   timestamp,
   index,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { organizations } from "./organizations";
@@ -47,7 +48,7 @@ export const cases = pgTable(
       .default("open")
       .notNull(),
     clientInfo: text("client_info"),
-    assignedLawyerId: integer("assigned_lawyer_id").references(() => users.id, {
+    assignedLawyerId: uuid("assigned_lawyer_id").references(() => users.id, {
       onDelete: "set null",
     }),
     courtJurisdiction: varchar("court_jurisdiction", { length: 255 }),

@@ -95,11 +95,11 @@ export class AuthService {
   /*
    * getUserById
    *
-   * - Retrieves a user from the `users` table by its primary key `id`.
+   * - Retrieves a user from the `users` table by its primary key `id` (UUID).
    * - If no user is found, returns `null` instead of throwing an error.
    * - When a user exists, returns a sanitized user object without the `passwordHash`.
    */
-  async getUserById(id: number) {
+  async getUserById(id: string) {
     const user = await this.db.query.users.findFirst({
       where: eq(users.id, id),
     });

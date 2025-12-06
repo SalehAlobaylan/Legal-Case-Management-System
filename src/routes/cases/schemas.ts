@@ -37,7 +37,7 @@ export const updateCaseSchema = createCaseSchema.partial();
 export const getCasesQuerySchema = z.object({
   status: z.string().optional(),
   caseType: z.string().optional(),
-  assignedLawyerId: z.coerce.number().optional(),
+  assignedLawyerId: z.string().uuid().optional(),
 });
 
 export type CreateCaseInput = z.infer<typeof createCaseSchema>;
