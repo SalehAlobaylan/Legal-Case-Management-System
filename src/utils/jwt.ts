@@ -1,5 +1,5 @@
 export interface JWTPayload {
-  sub: number; // user ID
+  id: number; // user ID
   email: string;
   role: string;
   orgId: number; // organization ID
@@ -14,11 +14,9 @@ export function createTokenPayload(user: {
   organizationId: number;
 }): Omit<JWTPayload, "iat" | "exp"> {
   return {
-    sub: user.id,
+    id: user.id,
     email: user.email,
     role: user.role,
     orgId: user.organizationId,
   };
 }
-
-
