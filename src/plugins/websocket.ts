@@ -39,8 +39,14 @@ declare module "fastify" {
  */
 
 const websocketPlugin: FastifyPluginAsync = async (fastify) => {
-  // Register the low-level @fastify/websocket plugin
-  await fastify.register(websocket);
+  // Register the low-level @fastify/websocket plugin with a Fastify v5-compatible wrapper
+  const websocketCompat = fp(websocket as any, {
+    name: "@fastify/websocket",
+    // Override the expected Fastify version to match v5.x
+    fastify: "5.x",
+  });
+
+  await fastify.register(websocketCompat);
 
   // Store active WebSocket connections per organization
   const connections = new Map<number, Set<any>>();
