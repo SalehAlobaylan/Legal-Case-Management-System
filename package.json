@@ -4,7 +4,8 @@
   "description": "<p align=\"left\">\r   <img src=\"https://skillicons.dev/icons?i=react\" alt=\"React\" height=\"50\" />\r   <img src=\"https://skillicons.dev/icons?i=nestjs\" alt=\"Nest.js\" height=\"50\" />\r   <img src=\"https://skillicons.dev/icons?i=postgres\" alt=\"PostgreSQL\" height=\"50\" />\r   <img src=\"https://skillicons.dev/icons?i=docker\" alt=\"Docker\" height=\"50\" />\r </p>",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
@@ -19,6 +20,8 @@
     "@fastify/websocket": "^10.0.1",
     "@fastify/swagger": "^9.5.2",
     "@fastify/swagger-ui": "^5.2.1",
+    "@fastify/helmet": "^12.0.0",
+    "@fastify/rate-limit": "^10.0.0",
     "bcrypt": "^5.1.1",
     "drizzle-orm": "^0.38.3",
     "dotenv": "^16.4.5",
@@ -36,6 +39,8 @@
     "@types/bcrypt": "^5.0.2",
     "drizzle-kit": "^0.24.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.0.0",
+    "@vitest/ui": "^2.0.0"
   }
 }
