@@ -8,9 +8,21 @@ import {
 import { AIClientService } from "../../services/ai-client.service";
 import { LinkService } from "../../services/link.service";
 import { CaseService } from "../../services/case.service";
+import type { Database } from "../../db/connection";
+
+type RequestWithUser<P> = FastifyRequest<{ Params: P }> & {
+  user: {
+    id: number;
+    email: string;
+    role: string;
+    orgId: number;
+  };
+};
 
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
+  broadcastToOrg: (orgId: number, event: string, data: any) => void;
+  db: Database;
 };
 
 const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
@@ -39,7 +51,8 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       request: FastifyRequest<{ Params: { caseId: string } }>,
       reply: FastifyReply
     ) => {
-      const caseId = Number.parseInt(request.params.caseId, 10);
+      const { params, user } = request as RequestWithUser<{ caseId: string }>;
+      const caseId = Number.parseInt(params.caseId, 10);
 
       if (Number.isNaN(caseId)) {
         return reply.status(400).send({
@@ -47,8 +60,8 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const caseService = new CaseService(fastify.db);
-      const case_ = await caseService.getCaseById(caseId, request.user!.orgId);
+      const caseService = new CaseService(app.db);
+      const case_ = await caseService.getCaseById(caseId, user.orgId);
 
       const aiService = new AIClientService();
       const matches = await aiService.findRelatedRegulations(
@@ -56,7 +69,7 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         10
       );
 
-      const linkService = new LinkService(fastify.db);
+      const linkService = new LinkService(app.db);
       const links = await Promise.all(
         matches.map((match) =>
           linkService.createLink({
@@ -67,6 +80,14 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
           })
         )
       );
+
+      // Notify all connected clients in the same organization in real-time
+      if (typeof app.broadcastToOrg === "function" && user) {
+        app.broadcastToOrg(user.orgId, "ai-links.generated", {
+          caseId,
+          links,
+        });
+      }
 
       return reply.send({ links });
     }
@@ -91,7 +112,8 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       request: FastifyRequest<{ Params: { caseId: string } }>,
       reply: FastifyReply
     ) => {
-      const caseId = Number.parseInt(request.params.caseId, 10);
+      const { params, user } = request as RequestWithUser<{ caseId: string }>;
+      const caseId = Number.parseInt(params.caseId, 10);
 
       if (Number.isNaN(caseId)) {
         return reply.status(400).send({
@@ -99,10 +121,10 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const caseService = new CaseService(fastify.db);
-      await caseService.getCaseById(caseId, request.user!.orgId);
+      const caseService = new CaseService(app.db);
+      await caseService.getCaseById(caseId, user.orgId);
 
-      const linkService = new LinkService(fastify.db);
+      const linkService = new LinkService(app.db);
       const links = await linkService.getLinksByCaseId(caseId);
 
       return reply.send({ links });
@@ -127,7 +149,8 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       request: FastifyRequest<{ Params: { linkId: string } }>,
       reply: FastifyReply
     ) => {
-      const linkId = Number.parseInt(request.params.linkId, 10);
+      const { params, user } = request as RequestWithUser<{ linkId: string }>;
+      const linkId = Number.parseInt(params.linkId, 10);
 
       if (Number.isNaN(linkId)) {
         return reply.status(400).send({
@@ -135,8 +158,16 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const linkService = new LinkService(fastify.db);
-      const link = await linkService.verifyLink(linkId, request.user!.id);
+      const linkService = new LinkService(app.db);
+      const link = await linkService.verifyLink(linkId, user.id);
+
+      // Broadcast verification event so clients can update UI in real-time
+      if (typeof app.broadcastToOrg === "function" && user) {
+        app.broadcastToOrg(user.orgId, "ai-links.verified", {
+          linkId,
+          verifiedBy: user.id,
+        });
+      }
 
       return reply.send({ link });
     }
@@ -144,7 +175,3 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
 };
 
 export default aiLinksRoutes;
-
-
-
-
