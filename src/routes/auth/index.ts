@@ -12,6 +12,22 @@ import { FastifyPluginAsync } from "fastify";
 import { registerHandler, loginHandler, getMeHandler } from "./handlers";
 
 const authRoutes: FastifyPluginAsync = async (fastify) => {
+  const userResponseSchema = {
+    type: "object",
+    properties: {
+      id: { type: "number" },
+      email: { type: "string", format: "email" },
+      fullName: { type: "string" },
+      organizationId: { type: "number" },
+      role: {
+        type: "string",
+        enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+      },
+      createdAt: { type: "string", format: "date-time" },
+      updatedAt: { type: "string", format: "date-time" },
+    },
+  } as const;
+
   // POST /api/auth/register
   // - Creates a new user account and returns a JWT plus the sanitized user object.
   fastify.post(
@@ -38,7 +54,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
           201: {
             type: "object",
             properties: {
-              user: { type: "object" },
+              user: userResponseSchema,
               token: { type: "string" },
             },
           },
@@ -60,8 +76,17 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
           type: "object",
           required: ["email", "password"],
           properties: {
-            email: { type: "string" },
+            email: { type: "string", format: "email" },
             password: { type: "string" },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              user: userResponseSchema,
+              token: { type: "string" },
+            },
           },
         },
       },
