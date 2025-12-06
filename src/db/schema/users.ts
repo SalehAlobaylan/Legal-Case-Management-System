@@ -1,9 +1,9 @@
 import {
   pgTable,
-  serial,
   integer,
   varchar,
   timestamp,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { organizations } from "./organizations";
@@ -17,7 +17,7 @@ export const userRoleEnum = [
 ] as const;
 
 export const users = pgTable("users", {
-  id: serial("id").primaryKey(),
+  id: uuid("id").defaultRandom().primaryKey(),
   organizationId: integer("organization_id")
     .references(() => organizations.id, { onDelete: "cascade" })
     .notNull(),

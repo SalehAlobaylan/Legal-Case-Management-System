@@ -25,7 +25,7 @@ export class CaseService {
    * - Automatically sets `assignedLawyerId` to the currently authenticated user's id.
    * - Returns the newly created case record.
    */
-  async createCase(data: NewCase, userId: number) {
+  async createCase(data: NewCase, userId: string) {
     const [newCase] = await this.db
       .insert(cases)
       .values({
@@ -71,7 +71,7 @@ export class CaseService {
     filters?: {
       status?: string;
       caseType?: string;
-      assignedLawyerId?: number;
+      assignedLawyerId?: string;
     }
   ) {
     const conditions = [eq(cases.organizationId, orgId)];

@@ -58,7 +58,7 @@ export class LinkService {
    *
    * - Marks a link as verified by a specific user and timestamps the action.
    */
-  async verifyLink(linkId: number, userId: number) {
+  async verifyLink(linkId: number, userId: string) {
     const [updated] = await this.db
       .update(caseRegulationLinks)
       .set({
@@ -83,9 +83,3 @@ export class LinkService {
       .where(eq(caseRegulationLinks.id, linkId));
   }
 }
-
-
-
-
-
-

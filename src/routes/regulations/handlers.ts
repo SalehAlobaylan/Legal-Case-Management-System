@@ -23,7 +23,7 @@ import type { Database } from "../../db/connection";
 
 type RequestWithUserAndDb = FastifyRequest & {
   user: {
-    id: number;
+    id: string;
     email: string;
     role: string;
     orgId: number;

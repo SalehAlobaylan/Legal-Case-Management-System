@@ -1,5 +1,5 @@
 export interface JWTPayload {
-  id: number; // user ID
+  id: string; // user ID (UUID)
   email: string;
   role: string;
   orgId: number; // organization ID
@@ -8,7 +8,7 @@ export interface JWTPayload {
 }
 
 export function createTokenPayload(user: {
-  id: number;
+  id: string;
   email: string;
   role: string;
   organizationId: number;

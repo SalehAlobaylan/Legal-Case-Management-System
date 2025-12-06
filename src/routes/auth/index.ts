@@ -15,7 +15,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
   const userResponseSchema = {
     type: "object",
     properties: {
-      id: { type: "number" },
+      id: { type: "string", format: "uuid" },
       email: { type: "string", format: "email" },
       fullName: { type: "string" },
       organizationId: { type: "number" },
