@@ -20,6 +20,7 @@ export function buildApp(opts = {}) {
   app.register(import("./plugins/database"));
   app.register(import("./plugins/error-handler"));
   app.register(import("./plugins/swagger"));
+  app.register(import("./plugins/websocket"));
 
   // Register routes
   app.register(import("./routes/auth"), { prefix: "/api/auth" });
