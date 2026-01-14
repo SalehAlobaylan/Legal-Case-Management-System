@@ -1,0 +1,121 @@
+# System Design Book
+**Project Name:** Legal Case Management System
+**Date:** December 7, 2025
+**Status:** Active
+
+---
+
+## 1. System Architecture Overview
+
+The system follows a **Microservices-inspired Layered Architecture**. It separates concerns into three distinct services to ensure scalability, maintainability, and independent deployment cycles.
+
+### 1.1 High-Level Diagram
+
+[Mobile App / Web App]
+       |
+       v
+[API Gateway / Load Balancer (Nginx or Cloud)]
+       |
+       +-------------------------+
+       |                         |
+[Backend API (Fastify)]   [AI Service (FastAPI)]
+       |                         |
+       +-----------+-------------+
+                   |
+           [PostgreSQL Database]
+           (Relational Data + Vectors)
+
+### 1.2 Core Components
+
+1.  **Frontend Clients**
+    *   **Web:** Next.js 14 Application (Admin & Desktop usage).
+    *   **Mobile:** Flutter Application (Lawyers on the go).
+    *   **Responsibility:** UI/UX, State Management, Real-time Socket listeners.
+
+2.  **Backend API (The Orchestrator)**
+    *   **Tech:** Node.js + Fastify + TypeScript.
+    *   **Responsibility:**
+        *   User Authentication & Authorization (JWT).
+        *   Case Management (CRUD).
+        *   Regulation Management.
+        *   WebSocket Server (Real-time notifications).
+        *   Job Queue Producer (for AI tasks).
+
+3.  **AI Microservice (The Intelligence)**
+    *   **Tech:** Python + FastAPI.
+    *   **Responsibility:**
+        *   Text Embedding Generation (using Arabic-optimized models).
+        *   Semantic Similarity Calculation.
+        *   Stateless computation (does not store data, only processes it).
+
+4.  **Database Layer**
+    *   **Tech:** PostgreSQL.
+    *   **Extensions:** `pgvector` (for AI embeddings), `tsvector` (for keyword search).
+    *   **Responsibility:** Single source of truth for all application data and vector embeddings.
+
+---
+
+## 2. Data Flow Scenarios
+
+### 2.1 Case Creation & AI Linking (The "Hot" Path)
+1.  **User** submits a new case via Flutter/Web.
+2.  **Backend** saves the Case record to PostgreSQL.
+3.  **Backend** calls **AI Service** endpoint `/find_related` with the case text.
+4.  **AI Service**:
+    *   Generates embedding for the case text.
+    *   Queries the `regulations` table (via vector similarity) to find top 10 matches.
+    *   Returns IDs and Similarity Scores.
+5.  **Backend** saves these matches to `case_regulation_links` table.
+6.  **Backend** emits a `case_processed` event via WebSocket.
+7.  **Frontend** receives event and updates the UI with a "New Suggestions" badge.
+
+### 2.2 Regulation Import & Versioning
+1.  **Admin** uploads a regulation update.
+2.  **Backend** creates a new entry in `regulation_versions` (preserving the old one).
+3.  **Backend** triggers re-indexing for this regulation.
+4.  **AI Service** generates a new embedding for the updated text.
+5.  **Database** updates the vector column for this regulation.
+
+---
+
+## 3. Database Schema Design (ERD)
+
+### Core Entities
+
+*   **Organizations**: Tenants (Law Firms).
+    *   `id`, `name`, `license_info`
+*   **Users**: Staff members.
+    *   `id`, `org_id`, `email`, `role`, `password_hash`
+*   **Cases**: Legal matters.
+    *   `id`, `org_id`, `title`, `description`, `status`, `vector_embedding`
+*   **Regulations**: Knowledge base.
+    *   `id`, `title`, `category`, `is_active`
+*   **RegulationVersions**: History tracking.
+    *   `id`, `reg_id`, `text_content`, `version_num`, `vector_embedding`
+*   **CaseRegulationLinks**: The AI "Glue".
+    *   `id`, `case_id`, `reg_id`, `match_score`, `is_verified`
+
+---
+
+## 4. API Interface Strategy
+
+### 4.1 Communication Protocols
+*   **Client <-> Backend:** REST (JSON) for actions, WebSocket (Socket.IO) for events.
+*   **Backend <-> AI Service:** Internal REST (HTTP/1.1).
+
+### 4.2 Security Standards
+*   **Authentication:** Bearer Token (JWT) required in headers.
+*   **Validation:** Zod schemas used on both Frontend and Backend to ensure type safety.
+*   **Encryption:** TLS 1.2+ for transit, bcrypt for passwords.
+
+---
+
+## 5. Infrastructure & Deployment
+
+*   **Containerization:** Docker for all services.
+*   **Orchestration:** Docker Compose (Dev), Kubernetes or Cloud Run (Prod).
+*   **Storage:**
+    *   PostgreSQL (Managed RDS/Cloud SQL).
+    *   Redis (Optional, for caching/queueing if scale increases).
+    *   Object Storage (S3/MinIO) for file attachments.
+

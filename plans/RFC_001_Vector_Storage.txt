@@ -1,0 +1,53 @@
+# RFC 001: Vector Storage Strategy
+
+## Meta Data
+*   **RFC ID:** 001
+*   **Title:** Vector Storage Strategy (pgvector vs Qdrant)
+*   **Author:** Backend Lead
+*   **Status:** Accepted
+*   **Created:** 2025-12-07
+
+---
+
+## 1. Summary
+We need to decide where to store the AI embeddings (vectors) for our Regulations and Cases to enable semantic search. This RFC proposes using **PostgreSQL with the `pgvector` extension**.
+
+## 2. Motivation
+Our AI feature relies on finding "similar" text. To do this, we convert text into numbers (vectors). We need a database that can:
+1.  Store these arrays of numbers.
+2.  Perform "Nearest Neighbor" search (find vectors close to X).
+3.  Ideally, filter by metadata (e.g., "Find similar regulations, but only 'Labor Law' category").
+
+## 3. Proposed Solution: PostgreSQL + pgvector
+We will use our existing primary database (PostgreSQL) and enable the open-source `pgvector` extension.
+
+**Why?**
+*   **Simplicity:** We already use Postgres for user/case data. No new infrastructure to manage.
+*   **ACID Compliance:** Vector data stays in sync with the text data. If we update a regulation text, we update the vector in the same transaction.
+*   **Cost:** No need to pay for a separate vector database cloud service.
+*   **Hybrid Search:** We can easily combine SQL filters (`WHERE category = 'Labor'`) with Vector similarity in a single query.
+
+**Implementation:**
+*   Enable extension: `CREATE EXTENSION vector;`
+*   Add column: `embedding vector(384)` (assuming MiniLM model).
+*   Indexing: Add an HNSW index for speed.
+
+## 4. Alternatives Considered
+
+### Option A: Qdrant (Dedicated Vector DB)
+*   **Pros:** Extremely fast at massive scale (millions of vectors). specialized features.
+*   **Cons:** Requires running a separate server/container. Data synchronization issues (what if Postgres updates but Qdrant fails?). Overkill for our dataset size (< 100k regulations).
+
+### Option B: Pinecone (Managed Service)
+*   **Pros:** Very easy to use, managed.
+*   **Cons:** External dependency, costs money, latency (network calls), data privacy concerns (sending legal text embeddings to third party).
+
+## 5. Drawbacks / Risks
+*   **Performance:** Postgres might be slower than Qdrant if we reach millions of rows.
+    *   *Mitigation:* Our dataset is thousands, not millions. Postgres is more than fast enough.
+*   **Resource Usage:** Vector search is CPU intensive. It might slow down the main DB.
+    *   *Mitigation:* Use read-replicas later if needed.
+
+## 6. Conclusion
+We will proceed with **pgvector**. It is the most pragmatic choice for a graduation project and handles our requirements perfectly.
+

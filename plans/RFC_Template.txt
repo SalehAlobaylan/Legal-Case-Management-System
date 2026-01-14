@@ -1,0 +1,36 @@
+# RFC Template (Request for Comments)
+
+## Meta Data
+*   **RFC ID:** [e.g., 001]
+*   **Title:** [Short descriptive title]
+*   **Author:** [Your Name]
+*   **Status:** [Draft / In Review / Accepted / Rejected]
+*   **Created:** [Date]
+
+---
+
+## 1. Summary
+A brief explanation of the proposed feature or change. (1-2 sentences)
+
+## 2. Motivation
+Why are we doing this? What problem does it solve?
+*   Current limitation: ...
+*   Desired outcome: ...
+
+## 3. Proposed Solution (Technical Design)
+How will we solve it?
+*   **Architecture Changes:** (New services, libraries, or patterns)
+*   **Data Model:** (Schema changes)
+*   **API Changes:** (New endpoints or modified contracts)
+
+## 4. Alternatives Considered
+What other options did you look at, and why did you reject them?
+*   **Option A:** [Description] - Rejected because...
+*   **Option B:** [Description] - Rejected because...
+
+## 5. Drawbacks / Risks
+Are there any downsides? (Complexity, Performance cost, Security risk)
+
+## 6. Unresolved Questions
+What do we still need to figure out?
+
