@@ -172,6 +172,49 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ link });
     }
   );
+
+  /**
+   * DELETE /api/ai-links/:linkId
+   *
+   * - Dismisses (removes) a specific AI-generated regulation link.
+   * - Used when a user decides the suggestion is not relevant.
+   */
+  fastify.delete(
+    "/:linkId",
+    {
+      schema: {
+        description: "Dismiss (remove) an AI-generated regulation link",
+        tags: ["ai-links"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (
+      request: FastifyRequest<{ Params: { linkId: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { params, user } = request as RequestWithUser<{ linkId: string }>;
+      const linkId = Number.parseInt(params.linkId, 10);
+
+      if (Number.isNaN(linkId)) {
+        return reply.status(400).send({
+          message: "Invalid linkId parameter",
+        });
+      }
+
+      const linkService = new LinkService(app.db);
+      await linkService.deleteLink(linkId);
+
+      // Broadcast dismiss event so clients can update UI in real-time
+      if (typeof app.broadcastToOrg === "function" && user) {
+        app.broadcastToOrg(user.orgId, "ai-links.dismissed", {
+          linkId,
+          dismissedBy: user.id,
+        });
+      }
+
+      return reply.code(204).send();
+    }
+  );
 };
 
 export default aiLinksRoutes;

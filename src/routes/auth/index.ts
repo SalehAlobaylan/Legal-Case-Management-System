@@ -2,14 +2,14 @@
  * Auth routes plugin
  *
  * - Registers the HTTP endpoints under the `/api/auth` prefix (when mounted in `app.ts`).
- * - Exposes three main routes: user registration (`POST /register`), login (`POST /login`),
- *   and fetching the currently authenticated user (`GET /me`).
+ * - Exposes four main routes: user registration (`POST /register`), login (`POST /login`),
+ *   fetching the currently authenticated user (`GET /me`), and updating the user profile (`PATCH /me`).
  * - Attaches OpenAPI/Swagger metadata for request/response schemas and security so that
  *   the API is documented in the Swagger UI.
  */
 
 import { FastifyPluginAsync } from "fastify";
-import { registerHandler, loginHandler, getMeHandler } from "./handlers";
+import { registerHandler, loginHandler, getMeHandler, updateMeHandler } from "./handlers";
 
 const authRoutes: FastifyPluginAsync = async (fastify) => {
   const userResponseSchema = {
@@ -108,6 +108,36 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
     },
     getMeHandler
   );
+
+  // PATCH /api/auth/me
+  // - Updates the currently authenticated user's profile information.
+  fastify.patch(
+    "/me",
+    {
+      onRequest: [fastify.authenticate],
+      schema: {
+        description: "Update current user profile",
+        tags: ["auth"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          properties: {
+            fullName: { type: "string", minLength: 2 },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              user: userResponseSchema,
+            },
+          },
+        },
+      },
+    },
+    updateMeHandler
+  );
 };
 
 export default authRoutes;
+

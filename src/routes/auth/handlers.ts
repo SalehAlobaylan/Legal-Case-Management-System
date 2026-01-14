@@ -12,8 +12,10 @@ import { AuthService } from "../../services/auth.service";
 import {
   RegisterInput,
   LoginInput,
+  UpdateProfileInput,
   registerSchema,
   loginSchema,
+  updateProfileSchema,
 } from "./schemas";
 import { createTokenPayload } from "../../utils/jwt";
 
@@ -92,6 +94,29 @@ export async function getMeHandler(
 ) {
   const authService = new AuthService(request.server.db);
   const user = await authService.getUserById(request.user!.id);
+
+  if (!user) {
+    return reply.code(404).send({ error: "User not found" });
+  }
+
+  return reply.send({ user });
+}
+
+/*
+ * updateMeHandler
+ *
+ * - Validates the request body with `updateProfileSchema`.
+ * - Updates the current user's profile information via `AuthService.updateProfile`.
+ * - Returns the updated user object.
+ */
+export async function updateMeHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const data = updateProfileSchema.parse(request.body as UpdateProfileInput);
+
+  const authService = new AuthService(request.server.db);
+  const user = await authService.updateProfile(request.user!.id, data);
 
   if (!user) {
     return reply.code(404).send({ error: "User not found" });

@@ -65,7 +65,7 @@ export class AIClientService {
         );
       }
 
-      const data: EmbeddingResponse = await response.json();
+      const data = (await response.json()) as EmbeddingResponse;
 
       if (!data.embeddings?.length || !data.embeddings[0]) {
         throw new Error("AI service returned an empty embeddings array");
@@ -110,7 +110,7 @@ export class AIClientService {
         );
       }
 
-      const data: FindRelatedResponse = await response.json();
+      const data = (await response.json()) as FindRelatedResponse;
       return data.related_regulations ?? [];
     } catch (error) {
       logger.error(

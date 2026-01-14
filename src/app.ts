@@ -4,6 +4,7 @@ import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
+import multipart from "@fastify/multipart";
 import { env } from "./config/env";
 
 // Plugins
@@ -18,6 +19,10 @@ import authRoutes from "./routes/auth";
 import casesRoutes from "./routes/cases";
 import regulationsRoutes from "./routes/regulations";
 import aiLinksRoutes from "./routes/ai-links";
+import dashboardRoutes from "./routes/dashboard";
+import documentsRoutes from "./routes/documents";
+import clientsRoutes from "./routes/clients";
+import notificationsRoutes from "./routes/notifications";
 
 export function buildApp(opts = {}) {
   const app = Fastify({
@@ -46,6 +51,13 @@ export function buildApp(opts = {}) {
     },
   });
 
+  // Multipart for file uploads
+  app.register(multipart, {
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB max file size
+    },
+  });
+
   // Core plugins
   app.register(databasePlugin);
   app.register(authPlugin);
@@ -61,6 +73,12 @@ export function buildApp(opts = {}) {
   app.register(casesRoutes, { prefix: "/api/cases" });
   app.register(regulationsRoutes, { prefix: "/api/regulations" });
   app.register(aiLinksRoutes, { prefix: "/api/ai-links" });
+  app.register(dashboardRoutes, { prefix: "/api/dashboard" });
+  app.register(documentsRoutes, { prefix: "/api/documents" });
+  app.register(clientsRoutes, { prefix: "/api/clients" });
+  app.register(notificationsRoutes, { prefix: "/api/notifications" });
 
   return app;
 }
+
+

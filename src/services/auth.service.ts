@@ -112,6 +112,40 @@ export class AuthService {
   }
 
   /*
+   * updateProfile
+   *
+   * - Updates the current user's profile information.
+   * - Only allows updating safe fields: fullName.
+   * - Note: phone and bio would need schema changes to support.
+   * - Returns the updated sanitized user object.
+   */
+  async updateProfile(
+    id: string,
+    data: {
+      fullName?: string;
+    }
+  ) {
+    const user = await this.db.query.users.findFirst({
+      where: eq(users.id, id),
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    const [updated] = await this.db
+      .update(users)
+      .set({
+        ...(data.fullName && { fullName: data.fullName }),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning();
+
+    return this.sanitizeUser(updated);
+  }
+
+  /*
    * sanitizeUser
    *
    * - Internal helper that strips the sensitive `passwordHash` field from a user record.
