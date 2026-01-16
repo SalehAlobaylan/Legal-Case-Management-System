@@ -14,7 +14,6 @@ import swaggerPlugin from "./plugins/swagger";
 import errorHandlerPlugin from "./plugins/error-handler";
 import websocketPlugin from "./plugins/websocket";
 
-// Routes
 import authRoutes from "./routes/auth";
 import casesRoutes from "./routes/cases";
 import regulationsRoutes from "./routes/regulations";
@@ -23,6 +22,8 @@ import dashboardRoutes from "./routes/dashboard";
 import documentsRoutes from "./routes/documents";
 import clientsRoutes from "./routes/clients";
 import notificationsRoutes from "./routes/notifications";
+import profileRoutes from "./routes/profile";
+import settingsRoutes from "./routes/settings";
 
 export function buildApp(opts = {}) {
   const app = Fastify({
@@ -77,6 +78,9 @@ export function buildApp(opts = {}) {
   app.register(documentsRoutes, { prefix: "/api/documents" });
   app.register(clientsRoutes, { prefix: "/api/clients" });
   app.register(notificationsRoutes, { prefix: "/api/notifications" });
+  app.register(notificationsRoutes, { prefix: "/api/alerts" }); // Alias for frontend compatibility
+  app.register(profileRoutes, { prefix: "/api/profile" });
+  app.register(settingsRoutes, { prefix: "/api/settings" });
 
   return app;
 }

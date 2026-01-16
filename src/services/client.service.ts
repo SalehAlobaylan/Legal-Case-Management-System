@@ -5,14 +5,14 @@
  * - All operations are scoped to the user's organization.
  */
 
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, like } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { clients, type NewClient } from "../db/schema";
+import { clients, type NewClient, cases } from "../db/schema";
 import { NotFoundError, ForbiddenError } from "../utils/errors";
 
 export class ClientService {
-  constructor(private db: Database) {}
+  constructor(private db: Database) { }
 
   /**
    * createClient
@@ -113,5 +113,27 @@ export class ClientService {
     await this.db.delete(clients).where(eq(clients.id, id));
 
     return { success: true };
+  }
+
+  /**
+   * getClientCases
+   *
+   * - Returns all cases associated with a client.
+   * - Matches cases by clientInfo field containing the client's name.
+   */
+  async getClientCases(clientId: number, orgId: number) {
+    // First get the client to verify access and get their name
+    const client = await this.getClientById(clientId, orgId);
+
+    // Find cases that reference this client by name in clientInfo
+    const clientCases = await this.db.query.cases.findMany({
+      where: and(
+        eq(cases.organizationId, orgId),
+        like(cases.clientInfo, `%${client.name}%`)
+      ),
+      orderBy: [desc(cases.createdAt)],
+    });
+
+    return clientCases;
   }
 }

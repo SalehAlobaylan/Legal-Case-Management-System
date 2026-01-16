@@ -211,6 +211,36 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(204).send();
     }
   );
+
+  /**
+   * GET /api/clients/:id/cases
+   *
+   * - Gets all cases for a specific client.
+   */
+  fastify.get(
+    "/:id/cases",
+    {
+      schema: {
+        description: "Get all cases for a client",
+        tags: ["clients"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { id } = request.params as { id: string };
+      const clientId = parseInt(id, 10);
+
+      if (isNaN(clientId)) {
+        return reply.status(400).send({ message: "Invalid client ID" });
+      }
+
+      const clientService = new ClientService(app.db);
+      const cases = await clientService.getClientCases(clientId, user.orgId);
+
+      return reply.send({ cases });
+    }
+  );
 };
 
 export default clientsRoutes;

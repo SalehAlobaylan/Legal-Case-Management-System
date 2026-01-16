@@ -124,3 +124,19 @@ export async function updateMeHandler(
 
   return reply.send({ user });
 }
+
+/*
+ * logoutHandler
+ *
+ * - Handles user logout.
+ * - Since JWT is stateless, this just returns success.
+ * - The frontend should clear the token from storage.
+ */
+export async function logoutHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  // JWT is stateless, so we just return success
+  // The frontend is responsible for clearing the token
+  return reply.send({ message: "Logged out successfully" });
+}
