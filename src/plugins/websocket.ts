@@ -1,12 +1,21 @@
-import { FastifyPluginAsync } from "fastify";
+import { FastifyPluginAsync, FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
-import websocket from "@fastify/websocket";
+import { Server as SocketIOServer, Socket } from "socket.io";
 import "@fastify/jwt";
+
+// Extend Socket to include user data
+interface AuthenticatedSocket extends Socket {
+  data: {
+    userId: string;
+    orgId: number;
+  };
+}
 
 declare module "fastify" {
   interface FastifyInstance {
+    io: SocketIOServer;
     /**
-     * Broadcast a JSON-serializable message to all active WebSocket
+     * Broadcast a JSON-serializable message to all active Socket.IO
      * connections that belong to the given organization.
      */
     broadcastToOrg: (orgId: number, event: string, data: any) => void;
@@ -14,148 +23,146 @@ declare module "fastify" {
 }
 
 /**
- * Frontend usage guide
- *
- * Connect (example URL):
- *   ws://localhost:3000/ws?token=<your-JWT-here>
- *
- * The `token` must be a valid JWT issued by this backend (same one used for HTTP auth).
- *
- * Listen for events on each message:
- *   - Each message is a JSON string with shape:
- *       { event: string, data: any, timestamp: string }
- *
- * Currently emitted events:
- *   - "ai-links.generated" → data: { caseId, links }
- *       Fired after AI regulations are generated and saved for a case.
- *
- *   - "ai-links.verified" → data: { linkId, verifiedBy }
- *       Fired after a link is verified by a user.
- *
- * Typical frontend flow:
- *   1. Open a WebSocket connection to /ws with the bearer token as a query parameter.
- *   2. On "message", JSON.parse the payload and switch on `message.event`.
- *   3. Update the UI in real-time based on `message.data`.
+ * Socket.IO WebSocket Plugin for Fastify
+ * 
+ * Frontend usage guide:
+ * 
+ * Connect with socket.io-client:
+ *   import { io } from "socket.io-client";
+ *   const socket = io("https://your-api.com", {
+ *     transports: ["websocket"],
+ *     query: { token: "<your-JWT-here>" }
+ *   });
+ * 
+ * Listen for events:
+ *   socket.on("ai-links.generated", (data) => { ... });
+ *   socket.on("regulation-updated", (data) => { ... });
+ *   socket.on("case-updated", (data) => { ... });
+ * 
+ * Events emitted by the server:
+ *   - "ai-links.generated" → { caseId, links }
+ *   - "ai-links.verified" → { linkId, verifiedBy }
+ *   - "regulation-updated" → { regulationId }
+ *   - "case-updated" → { caseId }
+ *   - "client-updated" → { clientId }
+ *   - "document-uploaded" → { caseId, fileName }
+ *   - "document-deleted" → { caseId }
+ *   - "notification" → { title, message }
  */
 
-const websocketPlugin: FastifyPluginAsync = async (fastify) => {
-  // Register the low-level @fastify/websocket plugin with a Fastify v5-compatible wrapper
-  const websocketCompat = fp(websocket as any, {
-    name: "@fastify/websocket",
-    // Override the expected Fastify version to match v5.x
-    fastify: "5.x",
+const websocketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => {
+  // Create Socket.IO server attached to Fastify's underlying HTTP server
+  const io = new SocketIOServer(fastify.server, {
+    cors: {
+      origin: process.env.CORS_ORIGIN?.split(",") || "*",
+      credentials: true,
+    },
+    transports: ["websocket", "polling"],
   });
 
-  await fastify.register(websocketCompat);
-
-  // Store active WebSocket connections per organization
-  const connections = new Map<number, Set<any>>();
-
-  fastify.decorate(
-    "broadcastToOrg",
-    (orgId: number, event: string, data: any) => {
-      const orgConnections = connections.get(orgId);
-      if (!orgConnections || orgConnections.size === 0) {
-        return;
-      }
-
-      const payload = JSON.stringify({
-        event,
-        data,
-        timestamp: new Date().toISOString(),
-      });
-
-      for (const socket of orgConnections) {
-        if (socket.readyState === 1) {
-          // OPEN
-          socket.send(payload);
-        }
-      }
-    }
-  );
-
-  fastify.get("/ws", { websocket: true }, (connection, req) => {
-    const socket = (connection as any).socket ?? (connection as any);
-    // Token can be provided as a query parameter: /ws?token=...
-    const { token } = (req.query || {}) as { token?: string };
+  // JWT Authentication middleware
+  io.use((socket: Socket, next) => {
+    const token = socket.handshake.query.token as string;
 
     if (!token) {
-      fastify.log.warn("WebSocket connection rejected: missing token");
-      socket.close(1008, "Token required");
-      return;
+      fastify.log.warn("Socket.IO connection rejected: missing token");
+      return next(new Error("Authentication required"));
     }
 
     try {
-      // Verify JWT and extract organization id
       const payload = fastify.jwt.verify(token) as any;
       const orgId = Number(payload.orgId);
+      const userId = payload.sub || payload.userId;
 
       if (!orgId || Number.isNaN(orgId)) {
-        fastify.log.warn("WebSocket connection rejected: invalid orgId");
-        socket.close(1008, "Invalid token payload");
-        return;
+        fastify.log.warn("Socket.IO connection rejected: invalid orgId");
+        return next(new Error("Invalid token payload"));
       }
 
-      if (!connections.has(orgId)) {
-        connections.set(orgId, new Set());
-      }
+      // Attach user data to socket
+      (socket as AuthenticatedSocket).data = {
+        userId,
+        orgId,
+      };
 
-      const orgConnections = connections.get(orgId)!;
-      orgConnections.add(socket);
-
-      fastify.log.info(
-        { orgId, count: orgConnections.size },
-        "WebSocket client connected"
-      );
-
-      socket.on("close", () => {
-        orgConnections.delete(socket);
-        if (orgConnections.size === 0) {
-          connections.delete(orgId);
-        }
-
-        fastify.log.info(
-          { orgId, remaining: orgConnections.size },
-          "WebSocket client disconnected"
-        );
-      });
-
-      socket.on("error", (err: unknown) => {
-        fastify.log.error(
-          { err, orgId },
-          "WebSocket error on client connection"
-        );
-      });
-
-      // Initial handshake message
-      socket.send(
-        JSON.stringify({
-          event: "connected",
-          data: { orgId },
-          timestamp: new Date().toISOString(),
-        })
-      );
+      next();
     } catch (err) {
-      fastify.log.warn(
-        { err },
-        "WebSocket connection rejected: invalid or expired token"
-      );
-      socket.close(1008, "Invalid token");
+      fastify.log.warn({ err }, "Socket.IO connection rejected: invalid token");
+      return next(new Error("Invalid or expired token"));
     }
   });
 
-  // Clean up all connections when the Fastify instance is closed
-  fastify.addHook("onClose", async (_instance) => {
-    for (const [, sockets] of connections) {
-      for (const socket of sockets) {
-        try {
-          socket.close(1001, "Server shutting down");
-        } catch {
-          // ignore
-        }
-      }
+  // Connection handler
+  io.on("connection", (socket: Socket) => {
+    const authSocket = socket as AuthenticatedSocket;
+    const { orgId, userId } = authSocket.data;
+
+    // Join organization room for targeted broadcasts
+    const orgRoom = `org:${orgId}`;
+    socket.join(orgRoom);
+
+    fastify.log.info(
+      { orgId, userId, socketId: socket.id },
+      "Socket.IO client connected"
+    );
+
+    // Send connection confirmation
+    socket.emit("connected", {
+      orgId,
+      socketId: socket.id,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Handle disconnection
+    socket.on("disconnect", (reason) => {
+      fastify.log.info(
+        { orgId, userId, socketId: socket.id, reason },
+        "Socket.IO client disconnected"
+      );
+    });
+
+    // Handle errors
+    socket.on("error", (err) => {
+      fastify.log.error(
+        { err, orgId, userId, socketId: socket.id },
+        "Socket.IO error"
+      );
+    });
+  });
+
+  // Decorate Fastify with Socket.IO instance
+  fastify.decorate("io", io);
+
+  // Broadcast helper function
+  fastify.decorate(
+    "broadcastToOrg",
+    (orgId: number, event: string, data: any) => {
+      const orgRoom = `org:${orgId}`;
+      const payload = {
+        ...data,
+        timestamp: new Date().toISOString(),
+      };
+
+      io.to(orgRoom).emit(event, payload);
+
+      fastify.log.debug(
+        { orgId, event, recipientCount: io.sockets.adapter.rooms.get(orgRoom)?.size || 0 },
+        "Broadcast sent to organization"
+      );
     }
-    connections.clear();
+  );
+
+  // Clean up on server close
+  fastify.addHook("onClose", async () => {
+    fastify.log.info("Closing Socket.IO server...");
+
+    // Disconnect all clients gracefully
+    const sockets = await io.fetchSockets();
+    for (const socket of sockets) {
+      socket.disconnect(true);
+    }
+
+    io.close();
   });
 };
 
