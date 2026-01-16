@@ -9,7 +9,7 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
-import { registerHandler, loginHandler, getMeHandler, updateMeHandler } from "./handlers";
+import { registerHandler, loginHandler, getMeHandler, updateMeHandler, logoutHandler } from "./handlers";
 
 const authRoutes: FastifyPluginAsync = async (fastify) => {
   const userResponseSchema = {
@@ -136,6 +136,19 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     updateMeHandler
+  );
+
+  // POST /api/auth/logout
+  // - Logout endpoint (JWT is stateless, so this just confirms logout)
+  fastify.post(
+    "/logout",
+    {
+      schema: {
+        description: "Logout user",
+        tags: ["auth"],
+      },
+    },
+    logoutHandler
   );
 };
 
