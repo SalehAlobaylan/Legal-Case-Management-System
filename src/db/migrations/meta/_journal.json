@@ -15,6 +15,13 @@
       "when": 1768413005007,
       "tag": "0001_nostalgic_the_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1768677695378,
+      "tag": "0002_faithful_sumo",
+      "breakpoints": true
     }
   ]
 }
