@@ -7,5 +7,8 @@ export * from "./case-regulation-links";
 export * from "./documents";
 export * from "./clients";
 export * from "./notifications";
+export * from "./user-activities";
+export * from "./user-achievements";
+
 
 
