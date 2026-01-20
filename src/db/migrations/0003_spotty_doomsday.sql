@@ -17,7 +17,6 @@ CREATE TABLE "user_achievements" (
 	"awarded_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "users" ADD COLUMN "phone" varchar(50);--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "location" varchar(255);--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "bio" text;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "specialization" varchar(255);--> statement-breakpoint
