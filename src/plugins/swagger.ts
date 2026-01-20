@@ -3,6 +3,8 @@ import fp from "fastify-plugin";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 
+import { env } from "../config/env";
+
 const swaggerPlugin: FastifyPluginAsync = async (fastify) => {
   await fastify.register(swagger, {
     openapi: {
@@ -14,7 +16,7 @@ const swaggerPlugin: FastifyPluginAsync = async (fastify) => {
       },
       servers: [
         {
-          url: "http://localhost:3000",
+          url: `http://${env.HOST}:${env.PORT}`,
           description: "Development server",
         },
       ],

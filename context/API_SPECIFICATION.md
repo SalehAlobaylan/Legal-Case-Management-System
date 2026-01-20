@@ -665,9 +665,17 @@ Update organization settings (admin only).
 
 ---
 
-## WebSocket Events
+## WebSocket Events (Socket.IO)
 
-Connect to: `ws://localhost:3001/ws?token=<jwt_token>`
+The frontend uses Socket.IO for real-time updates. The backend must have Socket.IO server attached to handle these connections.
+
+**Connection URL:** `wss://<API_HOST>/socket.io/?token=<jwt_token>&EIO=4&transport=websocket`
+
+> **Note:** The backend must attach Socket.IO to the Fastify server's underlying HTTP server. If using Fastify, this requires:
+> ```javascript
+> import { Server as SocketIOServer } from 'socket.io';
+> const io = new SocketIOServer(fastify.server, { cors: { origin: '*' } });
+> ```
 
 ### Server → Client Events
 
