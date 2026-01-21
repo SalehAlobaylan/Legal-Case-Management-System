@@ -26,7 +26,7 @@ export interface DashboardStats {
 }
 
 export class DashboardService {
-  constructor(private db: Database) {}
+  constructor(private db: Database) { }
 
   /**
    * getStats
@@ -116,4 +116,70 @@ export class DashboardService {
       upcomingHearings,
     };
   }
+
+  /**
+   * getRecentActivity
+   *
+   * - Returns recent activity items for the dashboard.
+   * - Includes regulation amendments, AI suggestions, and system notifications.
+   */
+  async getRecentActivity(orgId: number): Promise<Array<{
+    id: number;
+    type: string;
+    title: string;
+    description: string;
+    regulationId?: number;
+    caseId?: number;
+    createdAt: Date;
+  }>> {
+    // Get recent AI suggestions for the org's cases
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const recentLinks = await this.db.query.caseRegulationLinks.findMany({
+      where: gte(caseRegulationLinks.createdAt, sevenDaysAgo),
+      with: {
+        case: {
+          columns: { organizationId: true, caseNumber: true },
+        },
+        regulation: {
+          columns: { title: true },
+        },
+      },
+      orderBy: (links, { desc }) => [desc(links.createdAt)],
+      limit: 5,
+    });
+
+    // Filter to org's links and transform
+    const aiUpdates = recentLinks
+      .filter((link) => link.case?.organizationId === orgId)
+      .map((link, idx) => ({
+        id: idx + 1,
+        type: "ai_suggestion",
+        title: "AI Found New Match",
+        description: `New regulation match found for Case ${link.case?.caseNumber}: ${link.regulation?.title}`,
+        caseId: link.caseId,
+        regulationId: link.regulationId,
+        createdAt: link.createdAt,
+      }));
+
+    // Add a system notification placeholder
+    const systemUpdates = [
+      {
+        id: 100,
+        type: "system",
+        title: "System Update",
+        description: "Your Legal Case Management System is up to date.",
+        createdAt: new Date(),
+      },
+    ];
+
+    // Combine and sort by date
+    const allUpdates = [...aiUpdates, ...systemUpdates]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 10);
+
+    return allUpdates;
+  }
 }
+

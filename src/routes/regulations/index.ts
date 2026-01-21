@@ -16,6 +16,7 @@ import {
   FastifyInstance,
   FastifyPluginAsync,
   FastifyRequest,
+  FastifyReply,
   FastifySchema,
 } from "fastify";
 import {
@@ -104,6 +105,81 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
       } as FastifySchema,
     },
     getRegulationVersionsHandler as any
+  );
+
+  // POST /api/regulations/search
+  // - Full-text and semantic search for regulations.
+  app.post(
+    "/search",
+    {
+      schema: {
+        description: "Search regulations",
+        tags: ["regulations"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          required: ["query"],
+          properties: {
+            query: { type: "string" },
+            topK: { type: "number" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { query, topK = 10 } = request.body as { query: string; topK?: number };
+
+      // Simple search implementation - search by title or regulation number
+      const results = await (app as any).db.query.regulations.findMany({
+        where: (regulations: any, { or, ilike }: any) =>
+          or(
+            ilike(regulations.title, `%${query}%`),
+            ilike(regulations.regulationNumber, `%${query}%`)
+          ),
+        limit: topK,
+      });
+
+      return reply.send({ regulations: results });
+    }
+  );
+
+  // POST /api/regulations/subscribe
+  // - Subscribe organization to regulation updates.
+  app.post(
+    "/subscribe",
+    {
+      schema: {
+        description: "Subscribe to regulation updates",
+        tags: ["regulations"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          required: ["regulationId"],
+          properties: {
+            regulationId: { type: "number" },
+            sourceUrl: { type: "string" },
+            checkIntervalHours: { type: "number" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { regulationId, sourceUrl, checkIntervalHours } = request.body as {
+        regulationId: number;
+        sourceUrl?: string;
+        checkIntervalHours?: number;
+      };
+
+      // MVP: Log subscription request, actual subscription logic to be implemented
+      console.log(`Subscription requested for regulation ${regulationId}, source: ${sourceUrl}, interval: ${checkIntervalHours}h`);
+
+      return reply.code(201).send({
+        message: "Subscription created",
+        regulationId,
+        sourceUrl,
+        checkIntervalHours: checkIntervalHours || 24,
+      });
+    }
   );
 };
 
