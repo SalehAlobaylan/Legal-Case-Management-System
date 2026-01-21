@@ -14,6 +14,7 @@ import {
   FastifySchema,
 } from "fastify";
 import { DocumentService } from "../../services/document.service";
+import { AIClientService } from "../../services/ai-client.service";
 import type { Database } from "../../db/connection";
 import * as fs from "fs";
 import * as path from "path";
@@ -112,7 +113,7 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Parse multipart data
       const data = await request.file();
-      
+
       if (!data) {
         return reply.status(400).send({ message: "No file uploaded" });
       }
@@ -236,6 +237,81 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.code(204).send();
+    }
+  );
+
+  /**
+   * POST /api/documents/:docId/summarize
+   *
+   * - Generates an AI summary of a specific legal document.
+   * - Reads document content from disk and sends to AI service.
+   */
+  fastify.post(
+    "/:docId/summarize",
+    {
+      schema: {
+        description: "Generate AI summary of a document",
+        tags: ["documents", "ai"],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: "object",
+          properties: {
+            docId: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { docId } = request.params as { docId: string };
+      const docIdNum = parseInt(docId, 10);
+
+      if (isNaN(docIdNum)) {
+        return reply.status(400).send({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Invalid docId parameter",
+          },
+        });
+      }
+
+      const documentService = new DocumentService(app.db);
+      const document = await documentService.getDocumentById(docIdNum, user.orgId);
+
+      // Check if file exists
+      if (!fs.existsSync(document.filePath)) {
+        return reply.status(404).send({
+          error: {
+            code: "NOT_FOUND",
+            message: "File not found on disk",
+          },
+        });
+      }
+
+      try {
+        // Read document content
+        const content = fs.readFileSync(document.filePath, "utf-8");
+
+        const aiClient = new AIClientService();
+        const summary = await aiClient.summarizeDocument(
+          content,
+          document.originalName || document.fileName
+        );
+
+        return reply.send(summary);
+      } catch (error: any) {
+        // Handle AI service unavailable
+        if (error.message?.includes("AI_SERVICE_URL is not configured") ||
+          error.message?.includes("fetch failed")) {
+          return reply.status(503).send({
+            error: {
+              code: "SERVICE_UNAVAILABLE",
+              message: "AI service is currently unavailable",
+            },
+          });
+        }
+        throw error;
+      }
     }
   );
 };

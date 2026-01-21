@@ -25,6 +25,7 @@ import notificationsRoutes from "./routes/notifications";
 import profileRoutes from "./routes/profile";
 import settingsRoutes from "./routes/settings";
 import usersRoutes from "./routes/users";
+import aiRoutes from "./routes/ai";
 
 export function buildApp(opts = {}) {
   const app = Fastify({
@@ -83,6 +84,7 @@ export function buildApp(opts = {}) {
   app.register(profileRoutes, { prefix: "/api/profile" });
   app.register(settingsRoutes, { prefix: "/api/settings" });
   app.register(usersRoutes, { prefix: "/api/users/me" });
+  app.register(aiRoutes, { prefix: "/api/ai" });
 
   return app;
 }
