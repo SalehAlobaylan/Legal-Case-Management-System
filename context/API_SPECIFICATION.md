@@ -79,6 +79,63 @@ Get current authenticated user.
 
 ---
 
+## Dashboard
+
+### GET `/api/dashboard/stats`
+Get dashboard statistics for the current user's organization.
+
+**Response:** `200 OK`
+```json
+{
+  "activeCases": 24,
+  "activeCasesTrend": "+12%",
+  "pendingRegulations": 12,
+  "pendingRegulationsTrend": "+8%",
+  "aiDiscoveries": 89,
+  "aiDiscoveriesTrend": "+15%",
+  "casesUpdatedToday": 3,
+  "upcomingHearings": 5
+}
+```
+
+---
+
+### GET `/api/dashboard/recent-activity`
+Get recent activity and regulation updates for the dashboard.
+
+**Response:** `200 OK`
+```json
+{
+  "recentUpdates": [
+    {
+      "id": 1,
+      "type": "regulation_amendment",
+      "title": "New Amendment to Labor Law",
+      "description": "Article 77 has been revised with new termination compensation requirements",
+      "regulationId": 6,
+      "createdAt": "2024-12-20T10:30:00Z"
+    },
+    {
+      "id": 2,
+      "type": "ai_suggestion",
+      "title": "AI Found New Matches",
+      "description": "3 new regulation matches found for Case C-2024-001",
+      "caseId": 1,
+      "createdAt": "2024-12-19T14:00:00Z"
+    },
+    {
+      "id": 3,
+      "type": "system",
+      "title": "System Maintenance",
+      "description": "Scheduled maintenance on January 15th, 2025",
+      "createdAt": "2024-12-18T09:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
 ## Cases
 
 ### GET `/api/cases`
@@ -859,6 +916,8 @@ All errors follow this format:
 | POST | /api/auth/register | User registration |
 | POST | /api/auth/logout | User logout |
 | GET | /api/auth/me | Get current user |
+| GET | /api/dashboard/stats | Get dashboard statistics |
+| GET | /api/dashboard/recent-activity | Get recent activity |
 | GET | /api/cases | List cases |
 | GET | /api/cases/:id | Get case details |
 | POST | /api/cases | Create case |

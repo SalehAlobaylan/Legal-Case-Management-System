@@ -85,6 +85,32 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send(stats);
     }
   );
+
+  /**
+   * GET /api/dashboard/recent-activity
+   *
+   * - Returns recent activity and regulation updates for the dashboard.
+   * - Includes regulation amendments, AI suggestions, and system notifications.
+   */
+  fastify.get(
+    "/recent-activity",
+    {
+      schema: {
+        description: "Get recent activity for dashboard",
+        tags: ["dashboard"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+
+      const dashboardService = new DashboardService(app.db);
+      const recentUpdates = await dashboardService.getRecentActivity(user.orgId);
+
+      return reply.send({ recentUpdates });
+    }
+  );
 };
 
 export default dashboardRoutes;
+

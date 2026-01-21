@@ -15,6 +15,7 @@ import {
 } from "fastify";
 import { db } from "../../db/connection";
 import { organizations } from "../../db/schema/organizations";
+import { users } from "../../db/schema/users";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
@@ -188,6 +189,132 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
                 .returning();
 
             return reply.send({ organization: updatedOrg });
+        }
+    );
+
+    /**
+     * GET /api/settings/team
+     *
+     * - Returns all team members in the organization.
+     */
+    fastify.get(
+        "/team",
+        {
+            schema: {
+                description: "Get team members",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+
+            const membersList = await db
+                .select({
+                    id: users.id,
+                    fullName: users.fullName,
+                    email: users.email,
+                    role: users.role,
+                })
+                .from(users)
+                .where(eq(users.organizationId, user.orgId));
+
+            // Add status field (all users are active by default in this MVP)
+            const members = membersList.map(m => ({ ...m, status: "active" }));
+
+            return reply.send({ members });
+        }
+    );
+
+    /**
+     * POST /api/settings/team/invite
+     *
+     * - Invites a new member to the organization (admin only).
+     */
+    fastify.post(
+        "/team/invite",
+        {
+            schema: {
+                description: "Invite team member",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+                body: {
+                    type: "object",
+                    required: ["email", "role"],
+                    properties: {
+                        email: { type: "string", format: "email" },
+                        role: { type: "string", enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"] },
+                    },
+                },
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user, body } = request as RequestWithUser & { body: { email: string; role: string } };
+
+            // Check if user is admin
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const { email, role } = body;
+
+            // MVP: Log invitation, actual email sending to be implemented
+            console.log(`Invitation sent to ${email} with role ${role} for org ${user.orgId}`);
+
+            return reply.send({
+                message: "Invitation sent",
+                email,
+                role,
+            });
+        }
+    );
+
+    /**
+     * GET /api/settings/billing
+     *
+     * - Returns billing information and usage statistics.
+     */
+    fastify.get(
+        "/billing",
+        {
+            schema: {
+                description: "Get billing information",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+
+            // Check if user is admin
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            // MVP: Return mock billing data
+            return reply.send({
+                plan: {
+                    name: "Professional",
+                    price: 199,
+                    interval: "month",
+                    nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+                },
+                usage: {
+                    storageUsedGB: 2.5,
+                    storageLimitGB: 10,
+                    activeCases: 24,
+                    casesLimit: null,
+                },
+                invoices: [
+                    {
+                        id: "INV-2024-001",
+                        date: new Date().toISOString().split("T")[0],
+                        amount: 199,
+                        status: "paid",
+                        pdfUrl: "/api/invoices/INV-2024-001.pdf",
+                    },
+                ],
+            });
         }
     );
 };
