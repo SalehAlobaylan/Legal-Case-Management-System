@@ -106,7 +106,7 @@ This document details the backend implementation of the multi-organization regis
 
 **Validation Rules**:
 - `email`: Must be valid email format
-- `password`: Minimum 8 characters, at least 1 uppercase, 1 lowercase, 1 number
+- `password`: Minimum 6 characters
 - `confirmPassword`: Must match `password`
 - `fullName`: Minimum 2 characters
 - `organizationId`: Required for "join" mode, positive integer
@@ -469,10 +469,7 @@ const registerUser = async (formData: RegisterInput) => {
 
 Frontend should implement the same validation rules as backend:
 
-- Minimum 8 characters
-- At least 1 uppercase letter (A-Z)
-- At least 1 lowercase letter (a-z)
-- At least 1 number (0-9)
+- Minimum 6 characters
 
 ### Error Handling
 
@@ -484,7 +481,7 @@ Common error scenarios:
 | Organization not found | 404 | Organization not found | Refresh organizations list |
 | Password mismatch | 400 | Passwords do not match | Show inline error |
 | Invalid email | 400 | Invalid email | Show inline error |
-| Password too weak | 400 | Password must contain at least one uppercase letter... | Show inline error |
+| Password too short | 400 | Password must be at least 6 characters | Show inline error |
 
 ### Login Flow
 
@@ -626,11 +623,9 @@ type Organization = {
 
 #### Password Validation
 
-1. Test with 7 characters (should fail)
-2. Test with 8 characters but no uppercase (should fail)
-3. Test with 8 characters but no lowercase (should fail)
-4. Test with 8 characters but no number (should fail)
-5. Test with valid password (should succeed)
+1. Test with 5 characters (should fail)
+2. Test with 6 characters (should succeed)
+3. Test with longer password (should succeed)
 
 ---
 
@@ -667,7 +662,7 @@ For questions or issues:
 **Added**:
 - Dual-mode registration (join/create organization)
 - Organizations CRUD API
-- Enhanced password validation
+- Simple password validation (minimum 6 characters)
 - Country and subscription tier fields for organizations
 - Comprehensive API documentation
 
