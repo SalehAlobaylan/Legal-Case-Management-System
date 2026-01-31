@@ -14,27 +14,38 @@
 
 import { eq } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { users, UserRole } from "../db/schema";
+import { users, organizations, UserRole } from "../db/schema";
 import { hashPassword, verifyPassword } from "../utils/hash";
-import { UnauthorizedError, ConflictError } from "../utils/errors";
+import { UnauthorizedError, ConflictError, NotFoundError } from "../utils/errors";
+import { OrganizationService } from "./organization.service";
 
 export class AuthService {
   constructor(private db: Database) {}
 
+  private getOrganizationService(): OrganizationService {
+    return new OrganizationService(this.db);
+  }
+
   /*
    * register
    *
+   * - Supports dual registration modes: joining existing orgs or creating new ones.
    * - Checks if a user with the given email already exists and throws `ConflictError` if so.
-   * - Hashes the provided password and inserts a new user row into the `users` table
-   *   with the given email, full name, organization id, and optional role (defaulting to "lawyer").
+   * - Mode 1 (join): Adds user to existing organization with default role "lawyer".
+   * - Mode 2 (create): Creates new organization and adds user as "admin".
+   * - Hashes the provided password and inserts a new user row into the `users` table.
    * - Returns a sanitized user object that excludes the `passwordHash` field.
    */
   async register(data: {
     email: string;
     password: string;
     fullName: string;
-    organizationId: number;
     role?: UserRole;
+    registrationType: "join" | "create";
+    organizationId?: number;
+    organizationName?: string;
+    country?: string;
+    subscriptionTier?: string;
   }) {
     const existing = await this.db.query.users.findFirst({
       where: eq(users.email, data.email),
@@ -45,6 +56,32 @@ export class AuthService {
     }
 
     const passwordHash = await hashPassword(data.password);
+    let organizationId: number;
+
+    if (data.registrationType === "join") {
+      // Mode 1: Join existing organization
+      const orgService = this.getOrganizationService();
+      const org = await orgService.getById(data.organizationId!);
+
+      if (!org) {
+        throw new NotFoundError("Organization not found");
+      }
+
+      organizationId = org.id;
+    } else {
+      // Mode 2: Create new organization
+      const orgService = this.getOrganizationService();
+      const newOrg = await orgService.create({
+        name: data.organizationName!,
+        country: data.country || "SA",
+        subscriptionTier: data.subscriptionTier || "free",
+      });
+
+      organizationId = newOrg.id;
+    }
+
+    // Determine role: admin for create mode, lawyer for join mode (or override if provided)
+    const role = data.role ?? (data.registrationType === "create" ? "admin" : "lawyer");
 
     const [newUser] = await this.db
       .insert(users)
@@ -52,8 +89,8 @@ export class AuthService {
         email: data.email,
         passwordHash,
         fullName: data.fullName,
-        organizationId: data.organizationId,
-        role: data.role ?? "lawyer",
+        organizationId,
+        role,
       })
       .returning();
 

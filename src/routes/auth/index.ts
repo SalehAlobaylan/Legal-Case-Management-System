@@ -4,6 +4,7 @@
  * - Registers the HTTP endpoints under the `/api/auth` prefix (when mounted in `app.ts`).
  * - Exposes four main routes: user registration (`POST /register`), login (`POST /login`),
  *   fetching the currently authenticated user (`GET /me`), and updating the user profile (`PATCH /me`).
+ * - Supports dual-mode registration: joining existing organizations or creating new ones.
  * - Attaches OpenAPI/Swagger metadata for request/response schemas and security so that
  *   the API is documented in the Swagger UI.
  */
@@ -29,26 +30,53 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
   } as const;
 
   // POST /api/auth/register
-  // - Creates a new user account and returns a JWT plus the sanitized user object.
+  // - Creates a new user account with dual-mode support:
+  //   - "join": Add to existing organization (default role: lawyer)
+  //   - "create": Create new organization (default role: admin)
+  // - Returns a JWT plus the sanitized user object.
   fastify.post(
     "/register",
     {
       schema: {
-        description: "Register a new user",
+        description: "Register a new user (dual-mode: join or create organization)",
         tags: ["auth"],
         body: {
-          type: "object",
-          required: ["email", "password", "fullName", "organizationId"],
-          properties: {
-            email: { type: "string", format: "email" },
-            password: { type: "string", minLength: 8 },
-            fullName: { type: "string", minLength: 2 },
-            organizationId: { type: "number" },
-            role: {
-              type: "string",
-              enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+          oneOf: [
+            {
+              type: "object",
+              required: ["registrationType", "email", "password", "confirmPassword", "fullName", "organizationId"],
+              properties: {
+                registrationType: { const: "join" },
+                email: { type: "string", format: "email" },
+                password: { type: "string", minLength: 8 },
+                confirmPassword: { type: "string" },
+                fullName: { type: "string", minLength: 2 },
+                organizationId: { type: "number" },
+                role: {
+                  type: "string",
+                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+                },
+              },
             },
-          },
+            {
+              type: "object",
+              required: ["registrationType", "email", "password", "confirmPassword", "fullName", "organizationName"],
+              properties: {
+                registrationType: { const: "create" },
+                email: { type: "string", format: "email" },
+                password: { type: "string", minLength: 8 },
+                confirmPassword: { type: "string" },
+                fullName: { type: "string", minLength: 2 },
+                organizationName: { type: "string", minLength: 2 },
+                country: { type: "string", minLength: 2, maxLength: 2 },
+                subscriptionTier: { type: "string" },
+                role: {
+                  type: "string",
+                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+                },
+              },
+            },
+          ],
         },
         response: {
           201: {
