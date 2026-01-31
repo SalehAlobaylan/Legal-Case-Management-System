@@ -1,0 +1,2 @@
+ALTER TABLE "organizations" ADD COLUMN "country" varchar(2) DEFAULT 'SA' NOT NULL;--> statement-breakpoint
+ALTER TABLE "organizations" ADD COLUMN "subscription_tier" varchar(50) DEFAULT 'free' NOT NULL;
