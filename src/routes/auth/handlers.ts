@@ -22,7 +22,9 @@ import { createTokenPayload } from "../../utils/jwt";
 /*
  * registerHandler
  *
- * - Validates the request body with `registerSchema` (email, password, fullName, organizationId, role).
+ * - Validates the request body with `registerSchema` (supports dual mode: join/create).
+ * - Mode 1 (join): Adds user to existing organization with role "lawyer".
+ * - Mode 2 (create): Creates new organization and adds user as "admin".
  * - Calls `AuthService.register` to create a new user and receives a sanitized user object.
  * - Signs a JWT using `createTokenPayload` and returns a `201` response with `{ user, token }`.
  */
@@ -33,7 +35,17 @@ export async function registerHandler(
   const data = registerSchema.parse(request.body);
 
   const authService = new AuthService(request.server.db);
-  const user = await authService.register(data);
+  const user = await authService.register({
+    email: data.email,
+    password: data.password,
+    fullName: data.fullName,
+    role: data.role,
+    registrationType: data.registrationType,
+    organizationId: data.registrationType === "join" ? data.organizationId : undefined,
+    organizationName: data.registrationType === "create" ? data.organizationName : undefined,
+    country: data.registrationType === "create" ? data.country : undefined,
+    subscriptionTier: data.registrationType === "create" ? data.subscriptionTier : undefined,
+  });
 
   const token = request.server.jwt.sign(
     createTokenPayload({
