@@ -52,6 +52,11 @@ export class AuthService {
     });
 
     if (existing) {
+      if (existing.isOAuthUser) {
+        throw new ConflictError(
+          "This account uses Google Sign-In. Please sign in with Google."
+        );
+      }
       throw new ConflictError("User with this email already exists");
     }
 
@@ -101,6 +106,7 @@ export class AuthService {
    * login
    *
    * - Looks up a user by email; if no user is found, throws `UnauthorizedError`.
+   * - Checks if user is an OAuth-only user and throws appropriate error if so.
    * - Verifies the provided password against the stored `passwordHash`; on mismatch,
    *   throws `UnauthorizedError`.
    * - On successful authentication, updates the user's `lastLogin` timestamp and
@@ -112,6 +118,18 @@ export class AuthService {
     });
 
     if (!user) {
+      throw new UnauthorizedError("Invalid credentials");
+    }
+
+    // Check if this is an OAuth-only user
+    if (user.isOAuthUser) {
+      throw new UnauthorizedError(
+        "This account uses Google Sign-In. Please sign in with Google."
+      );
+    }
+
+    // Verify password (passwordHash should exist for non-OAuth users)
+    if (!user.passwordHash) {
       throw new UnauthorizedError("Invalid credentials");
     }
 
@@ -185,11 +203,11 @@ export class AuthService {
   /*
    * sanitizeUser
    *
-   * - Internal helper that strips the sensitive `passwordHash` field from a user record.
+   * - Internal helper that strips the sensitive `passwordHash` and OAuth-related fields from a user record.
    * - Returns a "safe" user object that can be sent back to API clients.
    */
   private sanitizeUser(user: typeof users.$inferSelect) {
-    const { passwordHash, ...safeUser } = user;
+    const { passwordHash, googleId, isOAuthUser, ...safeUser } = user;
     return safeUser;
   }
 }

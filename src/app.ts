@@ -15,6 +15,7 @@ import errorHandlerPlugin from "./plugins/error-handler";
 import websocketPlugin from "./plugins/websocket";
 
 import authRoutes from "./routes/auth";
+import oauthRoutes from "./routes/oauth";
 import organizationsRoutes from "./routes/organizations";
 import casesRoutes from "./routes/cases";
 import regulationsRoutes from "./routes/regulations";
@@ -74,6 +75,7 @@ export function buildApp(opts = {}) {
 
   // API Routes
   app.register(authRoutes, { prefix: "/api/auth" });
+  app.register(oauthRoutes, { prefix: "/api/auth" });
   app.register(organizationsRoutes, { prefix: "/api/organizations" });
   app.register(casesRoutes, { prefix: "/api/cases" });
   app.register(regulationsRoutes, { prefix: "/api/regulations" });
