@@ -216,6 +216,9 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
             }
 
             // Verify current password
+            if (!currentUser.passwordHash) {
+                return reply.status(400).send({ message: "OAuth users cannot change password" });
+            }
             const isValid = await bcrypt.compare(currentPassword, currentUser.passwordHash);
             if (!isValid) {
                 return reply.status(400).send({ message: "Current password is incorrect" });

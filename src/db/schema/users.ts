@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   uuid,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { organizations } from "./organizations";
@@ -23,7 +24,7 @@ export const users = pgTable("users", {
     .references(() => organizations.id, { onDelete: "cascade" })
     .notNull(),
   email: varchar("email", { length: 255 }).unique().notNull(),
-  passwordHash: varchar("password_hash", { length: 255 }).notNull(),
+  passwordHash: varchar("password_hash", { length: 255 }),
   fullName: varchar("full_name", { length: 255 }),
   phone: varchar("phone", { length: 50 }),
   location: varchar("location", { length: 255 }),
@@ -34,6 +35,8 @@ export const users = pgTable("users", {
     .$type<(typeof userRoleEnum)[number]>()
     .default("lawyer")
     .notNull(),
+  googleId: varchar("google_id", { length: 255 }).unique(),
+  isOAuthUser: boolean("is_oauth_user").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   lastLogin: timestamp("last_login"),
