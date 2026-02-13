@@ -62,56 +62,94 @@ async function main() {
   // 1. ORGANIZATIONS
   // ==========================================
   console.log("📁 Seeding organizations...");
+
+  // Org 1: Al-Faisal Law Firm
   const [insertedOrg] = await db.insert(organizations).values({
-    name: "Al-Rashid Law Firm",
+    name: "Al-Faisal Law Firm",
     licenseNumber: "LCMS-2024-001",
-    contactInfo: "info@alrashid-law.sa | +966 11 234 5678 | King Fahd Road, Riyadh, Saudi Arabia",
+    contactInfo: "info@alfaisal-law.sa | +966 11 234 5678 | King Fahd Road, Riyadh, Saudi Arabia",
   }).returning();
 
   const orgId = insertedOrg.id;
   console.log(`   ✓ Created organization: "${insertedOrg.name}" (ID: ${orgId})`);
 
+  // Org 2: Riyadh Legal Consultants (for testing)
+  const [insertedOrg2] = await db.insert(organizations).values({
+    name: "Riyadh Legal Consultants",
+    licenseNumber: "LCMS-2024-002",
+    contactInfo: "info@riyadhlegal.sa | +966 50 123 4567 | Olaya St, Riyadh, Saudi Arabia",
+  }).returning();
+
+  const orgId2 = insertedOrg2.id;
+  console.log(`   ✓ Created organization: "${insertedOrg2.name}" (ID: ${orgId2})`);
+
   // ==========================================
   // 2. USERS
   // ==========================================
   console.log("👥 Seeding users...");
+
+  // Easy passwords for testing
+  const simplePassword = await hashPassword("test123");
   const defaultPassword = await hashPassword("password123");
 
   const usersData = [
+    // Al-Faisal Law Firm users
     {
       organizationId: orgId,
-      email: "ahmed@alrashid-law.sa",
+      email: "ahmed@alfaisal-law.sa",
       passwordHash: defaultPassword,
-      fullName: "Ahmed Al-Rashid",
+      fullName: "Ahmed Al-Faisal",
       role: "admin" as const,
     },
     {
       organizationId: orgId,
-      email: "fatima@alrashid-law.sa",
+      email: "fatima@alfaisal-law.sa",
       passwordHash: defaultPassword,
       fullName: "Fatima Al-Zahrani",
       role: "senior_lawyer" as const,
     },
     {
       organizationId: orgId,
-      email: "omar@alrashid-law.sa",
+      email: "omar@alfaisal-law.sa",
       passwordHash: defaultPassword,
       fullName: "Omar Hassan",
       role: "lawyer" as const,
     },
     {
       organizationId: orgId,
-      email: "sara@alrashid-law.sa",
+      email: "sara@alfaisal-law.sa",
       passwordHash: defaultPassword,
       fullName: "Sara Al-Otaibi",
       role: "paralegal" as const,
     },
     {
       organizationId: orgId,
-      email: "khalid@alrashid-law.sa",
+      email: "khalid@alfaisal-law.sa",
       passwordHash: defaultPassword,
       fullName: "Khalid Al-Mutairi",
       role: "clerk" as const,
+    },
+    // Riyadh Legal Consultants users (EASY CREDENTIALS FOR TESTING)
+    {
+      organizationId: orgId2,
+      email: "admin@test.com",
+      passwordHash: simplePassword,
+      fullName: "Test Admin",
+      role: "admin" as const,
+    },
+    {
+      organizationId: orgId2,
+      email: "lawyer@test.com",
+      passwordHash: simplePassword,
+      fullName: "Test Lawyer",
+      role: "lawyer" as const,
+    },
+    {
+      organizationId: orgId2,
+      email: "sara@test.com",
+      passwordHash: simplePassword,
+      fullName: "Test Paralegal",
+      role: "paralegal" as const,
     },
   ];
 
@@ -155,9 +193,9 @@ async function main() {
     },
     {
       organizationId: orgId,
-      name: "Al-Rahman Family Estate",
+      name: "Al-Fahman Family Estate",
       type: "individual" as const,
-      email: "alrahman.estate@email.com",
+      email: "alfahman.estate@email.com",
       phone: "+966 55 333 4444",
       address: "Dammam, Saudi Arabia",
       notes: "Inheritance dispute case, multiple beneficiaries.",
@@ -209,11 +247,11 @@ async function main() {
     {
       organizationId: orgId,
       caseNumber: "C-2024-002",
-      title: "Estate of Sheikh H. Al-Rahman",
+      title: "Estate of Sheikh H. Al-Fahman",
       description: "Inheritance dispute involving real estate and financial assets.",
       caseType: "civil" as const,
       status: "in_progress" as const,
-      clientInfo: "Al-Rahman Family Estate",
+      clientInfo: "Al-Fahman Family Estate",
       assignedLawyerId: userMap.admin.id,
       courtJurisdiction: "Dammam Civil Court",
       filingDate: "2024-11-15",
@@ -266,7 +304,7 @@ async function main() {
   // Map cases for linking
   const caseMap = {
     amoudi: insertedCases[0],
-    alrahman: insertedCases[1],
+    alfahman: insertedCases[1],
     construction: insertedCases[2],
     dosari: insertedCases[3],
     techIP: insertedCases[4],
@@ -394,7 +432,7 @@ async function main() {
       verifiedAt: null,
     },
     {
-      caseId: caseMap.alrahman.id,
+      caseId: caseMap.alfahman.id,
       regulationId: regMap.civilTransactions.id,
       similarityScore: "0.9500",
       method: "manual" as const,
@@ -449,7 +487,7 @@ async function main() {
       uploadedBy: userMap.seniorLawyer.id,
     },
     {
-      caseId: caseMap.alrahman.id,
+      caseId: caseMap.alfahman.id,
       fileName: "estate_inventory.docx",
       originalName: "Estate Inventory Report.docx",
       filePath: "/uploads/cases/2/estate_inventory.docx",
@@ -531,10 +569,10 @@ async function main() {
   // ==========================================
   console.log("\n✅ Seeding completed successfully!\n");
   console.log("Summary:");
-  console.log("┌────────────────────────┬───────┐");
+  console.log("┌──────────────────────────────┐");
   console.log("│ Entity                 │ Count │");
-  console.log("├────────────────────────┼───────┤");
-  console.log(`│ Organizations          │     1 │`);
+  console.log("├──────────────────────────────┤");
+  console.log(`│ Organizations          │     2 │`);
   console.log(`│ Users                  │     ${insertedUsers.length} │`);
   console.log(`│ Clients                │     ${insertedClients.length} │`);
   console.log(`│ Cases                  │     ${insertedCases.length} │`);
@@ -543,10 +581,20 @@ async function main() {
   console.log(`│ Case-Regulation Links  │     ${insertedLinks.length} │`);
   console.log(`│ Documents              │     ${insertedDocs.length} │`);
   console.log(`│ Notifications          │     ${insertedNotifications.length} │`);
-  console.log("└────────────────────────┴───────┘");
-  console.log("\n📧 Login credentials:");
-  console.log("   All users have password: password123");
-  console.log("   Admin: ahmed@alrashid-law.sa");
+  console.log("└──────────────────────────────┘");
+  console.log("\n📧 Test Login Credentials:");
+  console.log("════════════════════════════════════════════════════════");
+  console.log("Organization 1: Al-Faisal Law Firm");
+  console.log("   Admin:      ahmed@alfaisal-law.sa  /  password123");
+  console.log("   Senior Law: fatima@alfaisal-law.sa / password123");
+  console.log("   Lawyer:     omar@alfaisal-law.sa   / password123");
+  console.log("   Paralegal:  sara@alfaisal-law.sa   / password123");
+  console.log("");
+  console.log("Organization 2: Riyadh Legal Consultants (EASY TO REMEMBER)");
+  console.log("   Admin:      admin@test.com  / test123");
+  console.log("   Lawyer:     lawyer@test.com   / test123");
+  console.log("   Paralegal: sara@test.com    / test123");
+  console.log("════════════════════════════════════════════════════════");
 }
 
 main()

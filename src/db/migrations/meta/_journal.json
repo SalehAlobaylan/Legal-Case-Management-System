@@ -43,6 +43,13 @@
       "when": 1770384957651,
       "tag": "0005_stiff_ben_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1770967500974,
+      "tag": "0006_black_wolverine",
+      "breakpoints": true
     }
   ]
 }

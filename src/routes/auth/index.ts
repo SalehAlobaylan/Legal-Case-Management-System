@@ -48,7 +48,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
               properties: {
                 registrationType: { const: "join" },
                 email: { type: "string", format: "email" },
-                password: { type: "string", minLength: 8 },
+                password: { type: "string", minLength: 4 },
                 confirmPassword: { type: "string" },
                 fullName: { type: "string", minLength: 2 },
                 organizationId: { type: "number" },
@@ -64,7 +64,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
               properties: {
                 registrationType: { const: "create" },
                 email: { type: "string", format: "email" },
-                password: { type: "string", minLength: 8 },
+                password: { type: "string", minLength: 4 },
                 confirmPassword: { type: "string" },
                 fullName: { type: "string", minLength: 2 },
                 organizationName: { type: "string", minLength: 2 },
