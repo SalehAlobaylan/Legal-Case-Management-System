@@ -27,6 +27,7 @@ import notificationsRoutes from "./routes/notifications";
 import profileRoutes from "./routes/profile";
 import settingsRoutes from "./routes/settings";
 import usersRoutes from "./routes/users";
+import billingRoutes from "./routes/billing";
 import aiRoutes from "./routes/ai";
 
 export function buildApp(opts = {}) {
@@ -88,6 +89,7 @@ export function buildApp(opts = {}) {
   app.register(profileRoutes, { prefix: "/api/profile" });
   app.register(settingsRoutes, { prefix: "/api/settings" });
   app.register(usersRoutes, { prefix: "/api/users/me" });
+  app.register(billingRoutes, { prefix: "/api/billing" });
   app.register(aiRoutes, { prefix: "/api/ai" });
 
   return app;

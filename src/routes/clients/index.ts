@@ -14,8 +14,12 @@ import {
   FastifySchema,
 } from "fastify";
 import { ClientService } from "../../services/client.service";
+import { ExportService } from "../../services/export.service";
+import { ClientMessagingService } from "../../services/client-messaging.service";
 import type { Database } from "../../db/connection";
 import { z } from "zod";
+import * as fs from "fs";
+import * as path from "path";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -239,6 +243,121 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       const cases = await clientService.getClientCases(clientId, user.orgId);
 
       return reply.send({ cases });
+    }
+  );
+
+  /**
+   * GET /api/clients/export
+   *
+   * - Exports all clients to CSV format
+   * - Returns file for download
+   */
+  fastify.get(
+    "/export",
+    {
+      schema: {
+        description: "Export clients to CSV",
+        tags: ["clients"],
+        security: [{ bearerAuth: [] }],
+        querystring: {
+          type: "object",
+          properties: {
+            format: {
+              type: "string",
+              enum: ["csv"],
+              default: "csv",
+            },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const query = request.query as { format?: string };
+
+      // Only CSV supported in MVP
+      if (query.format && query.format !== "csv") {
+        return reply
+          .status(400)
+          .send({ message: "Only CSV format is currently supported" });
+      }
+
+      const exportService = new ExportService(app.db);
+      const filePath = await exportService.exportClientsToCSV(user.orgId);
+
+      // Set headers for CSV download
+      const filename = path.basename(filePath);
+      reply.header("Content-Disposition", `attachment; filename="${filename}"`);
+      reply.header("Content-Type", "text/csv");
+
+      // Stream file
+      const fileStream = fs.createReadStream(filePath);
+
+      // Delete file after streaming
+      fileStream.on("end", async () => {
+        await exportService.deleteExportFile(filePath);
+      });
+
+      return reply.send(fileStream);
+    }
+  );
+
+  /**
+   * POST /api/clients/:id/message
+   *
+   * - Sends a message/notification to a client
+   * - Creates in-app notifications for team members
+   */
+  const sendMessageSchema = z.object({
+    message: z.string().min(1).max(2000),
+    type: z
+      .enum(["case_update", "hearing_reminder", "document_request", "general"])
+      .optional(),
+  });
+
+  fastify.post(
+    "/:id/message",
+    {
+      schema: {
+        description: "Send message to client",
+        tags: ["clients"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          required: ["message"],
+          properties: {
+            message: { type: "string", minLength: 1, maxLength: 2000 },
+            type: {
+              type: "string",
+              enum: ["case_update", "hearing_reminder", "document_request", "general"],
+            },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, body } = request as RequestWithUser & {
+        body: { message: string; type?: string };
+      };
+      const { id } = request.params as { id: string };
+      const clientId = parseInt(id, 10);
+
+      if (isNaN(clientId)) {
+        return reply.status(400).send({ message: "Invalid client ID" });
+      }
+
+      const data = sendMessageSchema.parse(body);
+
+      const messagingService = new ClientMessagingService(app.db);
+      const result = await messagingService.sendMessageToClient({
+        clientId,
+        message: data.message,
+        type: (data.type as any) || "general",
+        userId: user.id,
+        orgId: user.orgId,
+      });
+
+      return reply.send(result);
     }
   );
 };
