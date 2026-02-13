@@ -203,7 +203,7 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
                 );
 
             // 8. Calculate win rate
-            const totalCases = totalCasesResult.count || 0;
+            const totalCases = totalCasesResult[0]?.count || 0;
             const closedCases = closedCasesResult.length || 0;
             const winRate = totalCases > 0 ? Math.round((closedCases / totalCases) * 100) : 0;
 
@@ -233,20 +233,23 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
 
             return reply.send({
                 stats: {
-                    activeCases: activeCasesResult.count,
-                    totalClients: uniqueClientsResult.count,
+                    activeCases: activeCasesResult[0]?.count || 0,
+                    totalClients: uniqueClientsResult[0]?.count || 0,
                     winRate,
                     winRateChange,
                     avgCaseDuration,
                     avgDurationChange,
                     clientSatisfaction,
                     satisfactionChange,
-                    regulationsReviewed: regulationsReviewedResult.count,
-                    aiSuggestionsAccepted: aiSuggestionsResult.count,
-                    documentsProcessed: documentsProcessedResult.count,
-                    thisMonthHours: thisMonthActivitiesResult.count,
+                    regulationsReviewed: regulationsReviewedResult[0]?.count || 0,
+                    aiSuggestionsAccepted: aiSuggestionsResult[0]?.count || 0,
+                    documentsProcessed: documentsProcessedResult[0]?.count || 0,
+                    thisMonthHours: thisMonthActivitiesResult[0]?.count || 0,
                     hoursChange,
                 },
             });
         }
     );
+};
+
+export default profileRoutes;
