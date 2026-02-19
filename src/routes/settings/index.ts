@@ -18,6 +18,8 @@ import { organizations } from "../../db/schema/organizations";
 import { users } from "../../db/schema/users";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { NotificationPreferencesService } from "../../services/notification-preferences.service";
+import { SecurityService } from "../../services/security.service";
 
 type RequestWithUser = FastifyRequest & {
     user: {
@@ -32,31 +34,19 @@ type AuthenticatedFastifyInstance = FastifyInstance & {
     authenticate: (request: FastifyRequest) => Promise<void>;
 };
 
-// In-memory notification preferences (in production, store in DB)
-// For MVP, we'll use a simple Map keyed by user ID
-const notificationPreferences = new Map<string, {
-    emailAlerts: boolean;
-    pushNotifications: boolean;
-    regulationUpdates: boolean;
-    caseUpdates: boolean;
-    aiSuggestions: boolean;
-}>();
-
-const defaultNotificationPrefs = {
-    emailAlerts: true,
-    pushNotifications: true,
-    regulationUpdates: true,
-    caseUpdates: true,
-    aiSuggestions: true,
-};
-
 // Validation schemas
 const notificationPrefsSchema = z.object({
     emailAlerts: z.boolean().optional(),
     pushNotifications: z.boolean().optional(),
+    aiSuggestions: z.boolean().optional(),
     regulationUpdates: z.boolean().optional(),
     caseUpdates: z.boolean().optional(),
-    aiSuggestions: z.boolean().optional(),
+    systemAlerts: z.boolean().optional(),
+    quietHoursEnabled: z.boolean().optional(),
+    quietHoursStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+    quietHoursEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+    digestEnabled: z.boolean().optional(),
+    digestFrequency: z.enum(["daily", "weekly"]).optional(),
 });
 
 const updateOrgSchema = z.object({
@@ -64,8 +54,18 @@ const updateOrgSchema = z.object({
     contactInfo: z.string().optional(),
 });
 
+const changePasswordSchema = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(8),
+    confirmPassword: z.string().min(8),
+}).refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+});
+
 const settingsRoutes: FastifyPluginAsync = async (fastify) => {
     const app = fastify as AuthenticatedFastifyInstance;
+    const prefsService = new NotificationPreferencesService(db);
 
     // All routes require authentication
     app.addHook("onRequest", app.authenticate);
@@ -87,7 +87,7 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
         async (request: FastifyRequest, reply: FastifyReply) => {
             const { user } = request as RequestWithUser;
 
-            const prefs = notificationPreferences.get(user.id) || defaultNotificationPrefs;
+            const prefs = await prefsService.getPreferences(user.id);
 
             return reply.send(prefs);
         }
@@ -111,13 +111,12 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
             const { user, body } = request as RequestWithUser & { body: unknown };
             const data = notificationPrefsSchema.parse(body);
 
-            const current = notificationPreferences.get(user.id) || { ...defaultNotificationPrefs };
-            const updated = { ...current, ...data };
-            notificationPreferences.set(user.id, updated);
+            const updated = await prefsService.updatePreferences(user.id, data);
 
             return reply.send(updated);
         }
     );
+
 
     /**
      * GET /api/settings/organization
@@ -315,6 +314,63 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
                     },
                 ],
             });
+        }
+    );
+    const securityService = new SecurityService(db);
+
+    /**
+     * PUT /api/settings/security/password
+     *
+     * - Changes the current user's password.
+     */
+    fastify.put(
+        "/security/password",
+        {
+            schema: {
+                description: "Change user password",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user, body } = request as RequestWithUser & { body: unknown };
+            const data = changePasswordSchema.parse(body);
+
+            try {
+                await securityService.changePassword(
+                    user.id,
+                    data.currentPassword,
+                    data.newPassword
+                );
+                return reply.send({ success: true, message: "Password updated successfully" });
+            } catch (error: any) {
+                return reply.status(400).send({ error: error.message });
+            }
+        }
+    );
+
+    /**
+     * GET /api/settings/security/activity
+     *
+     * - Returns recent login activity for the current user.
+     */
+    fastify.get(
+        "/security/activity",
+        {
+            schema: {
+                description: "Get login activity",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+            const query = request.query as { limit?: string };
+            const limit = Math.min(parseInt(query.limit || "10"), 50);
+
+            const activity = await securityService.getLoginActivity(user.id, limit);
+
+            return reply.send({ activity });
         }
     );
 };
