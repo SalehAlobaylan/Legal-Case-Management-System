@@ -14,10 +14,41 @@ export interface SimilarityMatch {
   category?: string | null;
 }
 
+export interface SimilarityRegulationCandidate {
+  id: number;
+  title: string;
+  category?: string | null;
+  content_text?: string | null;
+}
+
 export interface FindRelatedResponse {
   related_regulations: SimilarityMatch[];
   query_length?: number;
   candidates_count?: number;
+}
+
+export interface ExtractRegulationInput {
+  sourceUrl: string;
+  ifNoneMatch?: string | null;
+  ifModifiedSince?: string | null;
+  maxChars?: number;
+}
+
+export interface ExtractRegulationResponse {
+  status: "ok" | "not_modified" | "error";
+  source_url: string;
+  final_url?: string | null;
+  etag?: string | null;
+  last_modified?: string | null;
+  content_type?: string | null;
+  extraction_method: string;
+  extracted_text?: string | null;
+  normalized_text_hash?: string | null;
+  raw_html?: string | null;
+  ocr_provider_used?: string;
+  fallback_stage?: string;
+  warnings?: string[];
+  error_code?: string | null;
 }
 
 /**
@@ -89,6 +120,7 @@ export class AIClientService {
    */
   async findRelatedRegulations(
     caseText: string,
+    regulations: SimilarityRegulationCandidate[],
     topK: number = 10,
     threshold: number = 0.3
   ): Promise<SimilarityMatch[]> {
@@ -98,6 +130,7 @@ export class AIClientService {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           case_text: caseText,
+          regulations,
           top_k: topK,
           threshold,
         }),
@@ -116,6 +149,38 @@ export class AIClientService {
       logger.error(
         { err: error },
         "Failed to find related regulations from AI service"
+      );
+      throw error;
+    }
+  }
+
+  async extractRegulationContent(
+    input: ExtractRegulationInput
+  ): Promise<ExtractRegulationResponse> {
+    try {
+      const response = await fetch(`${this.baseUrl}/regulations/extract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_url: input.sourceUrl,
+          if_none_match: input.ifNoneMatch || undefined,
+          if_modified_since: input.ifModifiedSince || undefined,
+          max_chars: input.maxChars,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `AI service error (regulations/extract): ${response.status} ${errorText}`
+        );
+      }
+
+      return (await response.json()) as ExtractRegulationResponse;
+    } catch (error) {
+      logger.error(
+        { err: error, sourceUrl: input.sourceUrl },
+        "Failed to extract regulation content from AI service"
       );
       throw error;
     }
@@ -256,7 +321,6 @@ export interface DocumentSummaryResponse {
     description: string;
   }[];
 }
-
 
 
 

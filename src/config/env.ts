@@ -21,6 +21,11 @@ const envSchema = z.object({
 
   AI_SERVICE_URL: z.string().url().optional(),
 
+  REG_MONITOR_ENABLED: z.coerce.boolean().default(true),
+  REG_MONITOR_POLL_SECONDS: z.coerce.number().int().min(5).default(60),
+  REG_MONITOR_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(5),
+  REG_MONITOR_FAILURE_RETRY_MINUTES: z.coerce.number().int().min(1).default(30),
+
   CORS_ORIGIN: z.string().default("*"),
 
   RATE_LIMIT_MAX: z.coerce.number().default(100),

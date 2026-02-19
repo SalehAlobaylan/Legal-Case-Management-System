@@ -72,9 +72,9 @@ export async function getRegulationsHandler(
   const filters = getRegulationsQuerySchema.parse(query as GetRegulationsQuery);
 
   const regulationService = new RegulationService(server.db);
-  const regulations = await regulationService.getAllRegulations(filters);
+  const response = await regulationService.getAllRegulations(filters);
 
-  return reply.send({ regulations });
+  return reply.send(response);
 }
 
 /*
@@ -144,7 +144,12 @@ export async function getRegulationVersionsHandler(
   const regulationService = new RegulationService(server.db);
   const versions = await regulationService.getVersionsByRegulationId(id);
 
-  return reply.send({ versions });
-}
+  const normalizedVersions = versions.map((version) => ({
+    ...version,
+    contentText: version.content,
+    createdAt: version.fetchedAt,
+  }));
 
+  return reply.send({ versions: normalizedVersions });
+}
 
