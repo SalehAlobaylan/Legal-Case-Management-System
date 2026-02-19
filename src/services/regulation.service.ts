@@ -10,7 +10,7 @@
  *   global error handler can map it to a consistent HTTP 404 response.
  */
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import {
@@ -62,7 +62,13 @@ export class RegulationService {
    * - Returns all regulations, optionally filtered by `category` and/or `status`.
    * - Always orders results by `createdAt` descending so newest items appear first.
    */
-  async getAllRegulations(filters?: { category?: string; status?: string }) {
+  async getAllRegulations(filters?: {
+    category?: string;
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  }) {
     const conditions: SQL<unknown>[] = [];
 
     if (filters?.category) {
@@ -71,11 +77,39 @@ export class RegulationService {
     if (filters?.status) {
       conditions.push(eq(regulations.status, filters.status as any));
     }
+    if (filters?.search) {
+      conditions.push(
+        or(
+          ilike(regulations.title, `%${filters.search}%`),
+          ilike(regulations.regulationNumber, `%${filters.search}%`)
+        )!
+      );
+    }
 
-    return this.db.query.regulations.findMany({
-      where: conditions.length > 0 ? and(...conditions) : undefined,
-      orderBy: [desc(regulations.createdAt)],
-    });
+    const page = Math.max(1, Number(filters?.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(filters?.limit || 10)));
+    const offset = (page - 1) * limit;
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [rows, totalRows] = await Promise.all([
+      this.db.query.regulations.findMany({
+        where: whereClause,
+        orderBy: [desc(regulations.createdAt)],
+        limit,
+        offset,
+      }),
+      this.db
+        .select({ count: sql<number>`count(*)` })
+        .from(regulations)
+        .where(whereClause),
+    ]);
+
+    return {
+      regulations: rows,
+      total: Number(totalRows[0]?.count ?? 0),
+      page,
+      limit,
+    };
   }
 
   /*

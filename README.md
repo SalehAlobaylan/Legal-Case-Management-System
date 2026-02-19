@@ -7,6 +7,10 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 - Case CRUD
 - Regulation management
 - AI-powered case–regulation linking
+- Regulation subscription APIs (single + bulk subscribe)
+- Dedicated regulation monitoring worker runtime
+- Hash-based regulation versioning with automatic notification fanout
+- Monitor observability endpoints (health + recent run stats)
 - Global error handler
 - OpenAPI/Swagger docs at `/docs`
 - PostgreSQL + Drizzle ORM
@@ -43,6 +47,10 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `PORT` / `HOST`: server bind options (defaults 3000 / 0.0.0.0)
 - `CORS_ORIGIN`: allowed origins (comma-separated)
 - `AI_SERVICE_URL` (optional): external AI microservice
+- `REG_MONITOR_ENABLED`: enable/disable monitoring worker loop
+- `REG_MONITOR_POLL_SECONDS`: worker polling interval
+- `REG_MONITOR_MAX_CONCURRENCY`: concurrent source checks per cycle
+- `REG_MONITOR_FAILURE_RETRY_MINUTES`: retry delay for failed checks
 
 ### API overview (brief)
 - `GET /health` — health check
@@ -51,6 +59,12 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `GET /api/auth/me` — current user (Bearer token)
 - `GET/POST/PUT/DELETE /api/cases` — basic case CRUD (protected)
 - `GET/POST/PUT /api/regulations` — regulation management (protected)
+- `POST /api/regulations/subscribe` — subscribe to a regulation (protected)
+- `POST /api/regulations/subscriptions/bulk` — bulk subscribe from AI suggestions (protected)
+- `GET /api/regulations/subscriptions/me` — current user subscriptions (protected)
+- `POST /api/regulations/monitor/run` — manual monitor run trigger (admin)
+- `GET /api/regulations/monitor/health` — monitor health summary (admin)
+- `GET /api/regulations/monitor/stats` — recent monitor run stats (admin)
 - `POST /api/ai-links/:caseId/generate` — AI suggestions (protected)
 - `GET /api/ai-links/:caseId` — list links (protected)
 

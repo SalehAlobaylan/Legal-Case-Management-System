@@ -7,6 +7,7 @@
     "predev": "npm run db:migrate && npm run db:seed",
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
+    "worker:reg-monitor": "tsx src/workers/regulation-monitor.worker.ts",
     "build": "tsc",
     "start:prod": "node dist/server.js",
     "db:generate": "drizzle-kit generate",

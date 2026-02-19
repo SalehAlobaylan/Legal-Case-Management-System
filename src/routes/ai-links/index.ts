@@ -8,6 +8,7 @@ import {
 import { AIClientService } from "../../services/ai-client.service";
 import { LinkService } from "../../services/link.service";
 import { CaseService } from "../../services/case.service";
+import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
 import type { Database } from "../../db/connection";
 
 type RequestWithUser<P> = FastifyRequest<{ Params: P }> & {
@@ -24,6 +25,36 @@ type AuthenticatedFastifyInstance = FastifyInstance & {
   broadcastToOrg: (orgId: number, event: string, data: any) => void;
   db: Database;
 };
+
+function serializeLinkForClient(
+  link: any,
+  isSubscribed?: boolean
+) {
+  const regulation = link.regulation
+    ? {
+        ...link.regulation,
+        regulation_number: link.regulation.regulationNumber,
+        source_url: link.regulation.sourceUrl,
+      }
+    : undefined;
+
+  return {
+    ...link,
+    case_id: link.caseId,
+    regulation_id: link.regulationId,
+    similarity_score:
+      typeof link.similarityScore === "string"
+        ? Number.parseFloat(link.similarityScore)
+        : link.similarityScore,
+    verified_by: link.verifiedBy,
+    verified_at: link.verifiedAt,
+    created_at: link.createdAt,
+    updated_at: link.updatedAt,
+    isSubscribed: typeof isSubscribed === "boolean" ? isSubscribed : false,
+    is_subscribed: typeof isSubscribed === "boolean" ? isSubscribed : false,
+    regulation,
+  };
+}
 
 const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
@@ -63,9 +94,26 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       const caseService = new CaseService(app.db);
       const case_ = await caseService.getCaseById(caseId, user.orgId);
 
+      const regulationCandidates = await app.db.query.regulations.findMany({
+        columns: {
+          id: true,
+          title: true,
+          category: true,
+        },
+      });
+
+      if (regulationCandidates.length === 0) {
+        return reply.send({ links: [] });
+      }
+
       const aiService = new AIClientService();
       const matches = await aiService.findRelatedRegulations(
         `${case_.title}\n\n${case_.description || ""}`,
+        regulationCandidates.map((regulation) => ({
+          id: regulation.id,
+          title: regulation.title,
+          category: regulation.category,
+        })),
         10
       );
 
@@ -81,15 +129,17 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         )
       );
 
+      const serializedLinks = links.map((link) => serializeLinkForClient(link));
+
       // Notify all connected clients in the same organization in real-time
       if (typeof app.broadcastToOrg === "function" && user) {
         app.broadcastToOrg(user.orgId, "ai-links.generated", {
           caseId,
-          links,
+          links: serializedLinks,
         });
       }
 
-      return reply.send({ links });
+      return reply.send({ links: serializedLinks });
     }
   );
 
@@ -126,8 +176,22 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
 
       const linkService = new LinkService(app.db);
       const links = await linkService.getLinksByCaseId(caseId);
+      const subscriptionService = new RegulationSubscriptionService(app.db);
+      const subscribedRegulationIds =
+        await subscriptionService.getSubscribedRegulationIds(
+          user.id,
+          user.orgId,
+          links.map((link) => link.regulationId)
+        );
 
-      return reply.send({ links });
+      const serializedLinks = links.map((link) =>
+        serializeLinkForClient(
+          link,
+          subscribedRegulationIds.has(link.regulationId)
+        )
+      );
+
+      return reply.send({ links: serializedLinks });
     }
   );
 
@@ -160,6 +224,7 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
 
       const linkService = new LinkService(app.db);
       const link = await linkService.verifyLink(linkId, user.id);
+      const serializedLink = serializeLinkForClient(link);
 
       // Broadcast verification event so clients can update UI in real-time
       if (typeof app.broadcastToOrg === "function" && user) {
@@ -169,7 +234,7 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      return reply.send({ link });
+      return reply.send({ link: serializedLink });
     }
   );
 

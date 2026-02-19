@@ -3,6 +3,8 @@ export * from "./users";
 export * from "./cases";
 export * from "./regulations";
 export * from "./regulation-versions";
+export * from "./regulation-subscriptions";
+export * from "./regulation-monitor-runs";
 export * from "./case-regulation-links";
 export * from "./documents";
 export * from "./clients";
@@ -12,6 +14,4 @@ export * from "./user-achievements";
 export * from "./billing";
 export * from "./notification-preferences";
 export * from "./login-activity";
-
-
 

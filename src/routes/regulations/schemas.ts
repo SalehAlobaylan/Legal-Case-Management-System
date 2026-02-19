@@ -36,10 +36,12 @@ export const updateRegulationSchema = createRegulationSchema.partial();
 export const getRegulationsQuerySchema = z.object({
   category: z.string().optional(),
   status: z.string().optional(),
+  search: z.string().optional(),
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
 });
 
 export type CreateRegulationInput = z.infer<typeof createRegulationSchema>;
 export type UpdateRegulationInput = z.infer<typeof updateRegulationSchema>;
 export type GetRegulationsQuery = z.infer<typeof getRegulationsQuerySchema>;
-
 

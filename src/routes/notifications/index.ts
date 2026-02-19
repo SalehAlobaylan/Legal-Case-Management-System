@@ -73,7 +73,22 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         { unreadOnly, limit, offset }
       );
 
-      return reply.send({ notifications });
+      const alerts = notifications.map((notification) => ({
+        id: notification.id,
+        userId: notification.userId,
+        type: notification.type,
+        title: notification.title,
+        message: notification.message || "",
+        isRead: notification.read,
+        metadata: {
+          caseId: notification.relatedCaseId || undefined,
+          regulationId: notification.relatedRegulationId || undefined,
+        },
+        createdAt: notification.createdAt,
+      }));
+      const unreadCount = alerts.filter((alert) => !alert.isRead).length;
+
+      return reply.send({ notifications, alerts, unreadCount });
     }
   );
 
