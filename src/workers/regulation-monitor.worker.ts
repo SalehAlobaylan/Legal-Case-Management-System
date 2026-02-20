@@ -2,6 +2,7 @@ import { db } from "../db/connection";
 import { env } from "../config/env";
 import { logger } from "../utils/logger";
 import { RegulationMonitorService } from "../services/regulation-monitor.service";
+import { DocumentExtractionService } from "../services/document-extraction.service";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -14,11 +15,15 @@ async function main() {
   }
 
   const monitorService = new RegulationMonitorService(db);
+  const documentExtractionService = new DocumentExtractionService(db);
   logger.info(
     {
       pollSeconds: env.REG_MONITOR_POLL_SECONDS,
       concurrency: env.REG_MONITOR_MAX_CONCURRENCY,
       failureRetryMinutes: env.REG_MONITOR_FAILURE_RETRY_MINUTES,
+      docExtractionEnabled: env.CASE_DOC_EXTRACTION_ENABLED,
+      docExtractionBatchSize: env.CASE_DOC_EXTRACTION_BATCH_SIZE,
+      docExtractionConcurrency: env.CASE_DOC_EXTRACTION_MAX_CONCURRENCY,
     },
     "Regulation monitor worker started"
   );
@@ -29,6 +34,14 @@ async function main() {
       await monitorService.runDueSubscriptions({
         triggerSource: "worker",
       });
+      const extractionResult =
+        await documentExtractionService.runPendingExtractions();
+      if (extractionResult.processed > 0) {
+        logger.info(
+          extractionResult,
+          "Case document extraction cycle completed"
+        );
+      }
     } catch (error) {
       logger.error({ err: error }, "Unhandled error during regulation monitor cycle");
     }

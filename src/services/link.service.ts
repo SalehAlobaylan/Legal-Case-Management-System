@@ -21,15 +21,23 @@ export class LinkService {
    *   its `similarityScore` and `method` are updated instead.
    */
   async createLink(data: NewCaseRegulationLink) {
+    const updateSet: Partial<typeof caseRegulationLinks.$inferInsert> = {
+      similarityScore: data.similarityScore,
+      method: data.method,
+    };
+    if (typeof data.evidenceSources !== "undefined") {
+      updateSet.evidenceSources = data.evidenceSources;
+    }
+    if (typeof data.matchedWithDocuments !== "undefined") {
+      updateSet.matchedWithDocuments = data.matchedWithDocuments;
+    }
+
     const [link] = await this.db
       .insert(caseRegulationLinks)
       .values(data)
       .onConflictDoUpdate({
         target: [caseRegulationLinks.caseId, caseRegulationLinks.regulationId],
-        set: {
-          similarityScore: data.similarityScore,
-          method: data.method,
-        },
+        set: updateSet,
       })
       .returning();
 

@@ -14,6 +14,7 @@ import {
   FastifySchema,
 } from "fastify";
 import { DocumentService } from "../../services/document.service";
+import { DocumentExtractionService } from "../../services/document-extraction.service";
 import { AIClientService } from "../../services/ai-client.service";
 import type { Database } from "../../db/connection";
 import * as fs from "fs";
@@ -80,8 +81,24 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const documentService = new DocumentService(app.db);
       const documents = await documentService.getDocumentsByCaseId(caseIdNum, user.orgId);
+      const extractionService = new DocumentExtractionService(app.db);
+      const extractionMap = await extractionService.getCaseExtractionMap(
+        caseIdNum,
+        user.orgId
+      );
 
-      return reply.send({ documents });
+      const withExtractionState = documents.map((document) => {
+        const extraction = extractionMap.get(document.id);
+        return {
+          ...document,
+          extractionStatus: extraction?.status || "pending",
+          extractionMethod: extraction?.extractionMethod || null,
+          extractionErrorCode: extraction?.errorCode || null,
+          extractionWarnings: extraction?.warnings || [],
+        };
+      });
+
+      return reply.send({ documents: withExtractionState });
     }
   );
 
@@ -145,10 +162,37 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         mimeType: data.mimetype,
         uploadedBy: user.id,
       });
+      const extractionService = new DocumentExtractionService(app.db);
+      await extractionService.enqueueSingleDocument(document.id, user.orgId);
 
       return reply.code(201).send({ document });
     }
   );
+
+  const downloadDocumentHandler = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ) => {
+    const { user } = request as RequestWithUser;
+    const { id } = request.params as { id: string };
+    const docId = parseInt(id, 10);
+
+    if (isNaN(docId)) {
+      return reply.status(400).send({ message: "Invalid document ID" });
+    }
+
+    const documentService = new DocumentService(app.db);
+    const document = await documentService.getDocumentById(docId, user.orgId);
+
+    if (!fs.existsSync(document.filePath)) {
+      return reply.status(404).send({ message: "File not found on disk" });
+    }
+
+    reply.header("Content-Disposition", `attachment; filename="${document.originalName}"`);
+    reply.header("Content-Type", document.mimeType || "application/octet-stream");
+    const stream = fs.createReadStream(document.filePath);
+    return reply.send(stream);
+  };
 
   /**
    * GET /api/documents/:id/download
@@ -171,31 +215,26 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         },
       } as FastifySchema,
     },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const { user } = request as RequestWithUser;
-      const { id } = request.params as { id: string };
-      const docId = parseInt(id, 10);
+    downloadDocumentHandler
+  );
 
-      if (isNaN(docId)) {
-        return reply.status(400).send({ message: "Invalid document ID" });
-      }
-
-      const documentService = new DocumentService(app.db);
-      const document = await documentService.getDocumentById(docId, user.orgId);
-
-      // Check if file exists
-      if (!fs.existsSync(document.filePath)) {
-        return reply.status(404).send({ message: "File not found on disk" });
-      }
-
-      // Set headers for download
-      reply.header("Content-Disposition", `attachment; filename="${document.originalName}"`);
-      reply.header("Content-Type", document.mimeType || "application/octet-stream");
-
-      // Stream the file
-      const stream = fs.createReadStream(document.filePath);
-      return reply.send(stream);
-    }
+  // Canonical download route used by frontend
+  fastify.get(
+    "/:id/download",
+    {
+      schema: {
+        description: "Download a document",
+        tags: ["documents"],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    downloadDocumentHandler
   );
 
   /**
@@ -289,12 +328,28 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        // Read document content
-        const content = fs.readFileSync(document.filePath, "utf-8");
-
         const aiClient = new AIClientService();
+        const buffer = fs.readFileSync(document.filePath);
+        const extraction = await aiClient.extractDocumentContent({
+          content: buffer,
+          fileName: document.originalName || document.fileName,
+          contentType: document.mimeType,
+        });
+
+        if (extraction.status !== "ok" || !extraction.extracted_text) {
+          return reply.status(422).send({
+            error: {
+              code: "EXTRACTION_FAILED",
+              message:
+                extraction.error_code ||
+                "Could not extract readable text from this document",
+              warnings: extraction.warnings || [],
+            },
+          });
+        }
+
         const summary = await aiClient.summarizeDocument(
-          content,
+          extraction.extracted_text,
           document.originalName || document.fileName
         );
 
@@ -312,6 +367,43 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         }
         throw error;
       }
+    }
+  );
+
+  fastify.get(
+    "/:id/extraction-status",
+    {
+      schema: {
+        description: "Get extraction status for a document",
+        tags: ["documents", "ai"],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { id } = request.params as { id: string };
+      const docId = parseInt(id, 10);
+
+      if (isNaN(docId)) {
+        return reply.status(400).send({ message: "Invalid document ID" });
+      }
+
+      const extractionService = new DocumentExtractionService(app.db);
+      const status = await extractionService.getExtractionStatusByDocumentId(
+        docId,
+        user.orgId
+      );
+
+      return reply.send({
+        documentId: docId,
+        ...status,
+      });
     }
   );
 };

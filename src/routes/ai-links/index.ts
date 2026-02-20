@@ -9,6 +9,7 @@ import { AIClientService } from "../../services/ai-client.service";
 import { LinkService } from "../../services/link.service";
 import { CaseService } from "../../services/case.service";
 import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
+import { DocumentExtractionService } from "../../services/document-extraction.service";
 import type { Database } from "../../db/connection";
 
 type RequestWithUser<P> = FastifyRequest<{ Params: P }> & {
@@ -30,6 +31,18 @@ function serializeLinkForClient(
   link: any,
   isSubscribed?: boolean
 ) {
+  let evidenceSources: unknown[] = [];
+  if (typeof link.evidenceSources === "string") {
+    try {
+      const parsed = JSON.parse(link.evidenceSources);
+      evidenceSources = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      evidenceSources = [];
+    }
+  } else if (Array.isArray(link.evidenceSources)) {
+    evidenceSources = link.evidenceSources;
+  }
+
   const regulation = link.regulation
     ? {
         ...link.regulation,
@@ -52,6 +65,10 @@ function serializeLinkForClient(
     updated_at: link.updatedAt,
     isSubscribed: typeof isSubscribed === "boolean" ? isSubscribed : false,
     is_subscribed: typeof isSubscribed === "boolean" ? isSubscribed : false,
+    evidenceSources,
+    evidence_sources: evidenceSources,
+    matchedWithDocuments: Boolean(link.matchedWithDocuments),
+    matched_with_documents: Boolean(link.matchedWithDocuments),
     regulation,
   };
 }
@@ -93,6 +110,19 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
 
       const caseService = new CaseService(app.db);
       const case_ = await caseService.getCaseById(caseId, user.orgId);
+      const extractionService = new DocumentExtractionService(app.db);
+      const documentContext = await extractionService.prepareCaseFragments(
+        caseId,
+        user.orgId
+      );
+      const caseFragments = [
+        {
+          fragment_id: "case:primary",
+          text: `${case_.title}\n\n${case_.description || ""}`,
+          source: "case" as const,
+        },
+        ...documentContext.fragments,
+      ];
 
       const regulationCandidates = await app.db.query.regulations.findMany({
         columns: {
@@ -103,7 +133,12 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       if (regulationCandidates.length === 0) {
-        return reply.send({ links: [] });
+        return reply.send({
+          links: [],
+          generationMeta: {
+            ...documentContext.meta,
+          },
+        });
       }
 
       const aiService = new AIClientService();
@@ -114,7 +149,9 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
           title: regulation.title,
           category: regulation.category,
         })),
-        10
+        10,
+        0.3,
+        caseFragments
       );
 
       const linkService = new LinkService(app.db);
@@ -125,6 +162,12 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
             regulationId: match.regulation_id,
             similarityScore: match.similarity_score.toString(),
             method: "ai",
+            evidenceSources: JSON.stringify(match.evidence || []),
+            matchedWithDocuments: Boolean(
+              (match.evidence || []).some(
+                (item) => item?.source === "document"
+              )
+            ),
           })
         )
       );
@@ -136,10 +179,18 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         app.broadcastToOrg(user.orgId, "ai-links.generated", {
           caseId,
           links: serializedLinks,
+          generationMeta: {
+            ...documentContext.meta,
+          },
         });
       }
 
-      return reply.send({ links: serializedLinks });
+      return reply.send({
+        links: serializedLinks,
+        generationMeta: {
+          ...documentContext.meta,
+        },
+      });
     }
   );
 

@@ -12,6 +12,7 @@ export interface SimilarityMatch {
   similarity_score: number;
   title: string;
   category?: string | null;
+  evidence?: SimilarityEvidence[];
 }
 
 export interface SimilarityRegulationCandidate {
@@ -19,6 +20,22 @@ export interface SimilarityRegulationCandidate {
   title: string;
   category?: string | null;
   content_text?: string | null;
+}
+
+export interface SimilarityCaseFragment {
+  fragment_id: string;
+  text: string;
+  source: "case" | "document";
+  document_id?: number;
+  document_name?: string;
+}
+
+export interface SimilarityEvidence {
+  fragment_id: string;
+  source: string;
+  document_id?: number | null;
+  document_name?: string | null;
+  score: number;
 }
 
 export interface FindRelatedResponse {
@@ -45,6 +62,26 @@ export interface ExtractRegulationResponse {
   extracted_text?: string | null;
   normalized_text_hash?: string | null;
   raw_html?: string | null;
+  ocr_provider_used?: string;
+  fallback_stage?: string;
+  warnings?: string[];
+  error_code?: string | null;
+}
+
+export interface ExtractDocumentInput {
+  content: Buffer | Uint8Array;
+  fileName: string;
+  contentType?: string | null;
+  maxChars?: number;
+}
+
+export interface ExtractDocumentResponse {
+  status: "ok" | "error";
+  file_name: string;
+  content_type?: string | null;
+  extraction_method: string;
+  extracted_text?: string | null;
+  normalized_text_hash?: string | null;
   ocr_provider_used?: string;
   fallback_stage?: string;
   warnings?: string[];
@@ -122,7 +159,8 @@ export class AIClientService {
     caseText: string,
     regulations: SimilarityRegulationCandidate[],
     topK: number = 10,
-    threshold: number = 0.3
+    threshold: number = 0.3,
+    caseFragments?: SimilarityCaseFragment[]
   ): Promise<SimilarityMatch[]> {
     try {
       const response = await fetch(`${this.baseUrl}/similarity/find-related`, {
@@ -133,6 +171,7 @@ export class AIClientService {
           regulations,
           top_k: topK,
           threshold,
+          case_fragments: caseFragments?.length ? caseFragments : undefined,
         }),
       });
 
@@ -181,6 +220,41 @@ export class AIClientService {
       logger.error(
         { err: error, sourceUrl: input.sourceUrl },
         "Failed to extract regulation content from AI service"
+      );
+      throw error;
+    }
+  }
+
+  async extractDocumentContent(
+    input: ExtractDocumentInput
+  ): Promise<ExtractDocumentResponse> {
+    try {
+      const formData = new FormData();
+      const blob = new Blob([input.content], {
+        type: input.contentType || "application/octet-stream",
+      });
+      formData.append("file", blob, input.fileName || "document");
+      if (typeof input.maxChars === "number") {
+        formData.append("max_chars", String(input.maxChars));
+      }
+
+      const response = await fetch(`${this.baseUrl}/documents/extract`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `AI service error (documents/extract): ${response.status} ${errorText}`
+        );
+      }
+
+      return (await response.json()) as ExtractDocumentResponse;
+    } catch (error) {
+      logger.error(
+        { err: error, fileName: input.fileName },
+        "Failed to extract document content from AI service"
       );
       throw error;
     }
@@ -321,7 +395,6 @@ export interface DocumentSummaryResponse {
     description: string;
   }[];
 }
-
 
 
 

@@ -7,6 +7,7 @@ export * from "./regulation-subscriptions";
 export * from "./regulation-monitor-runs";
 export * from "./case-regulation-links";
 export * from "./documents";
+export * from "./document-extractions";
 export * from "./clients";
 export * from "./notifications";
 export * from "./user-activities";
@@ -14,4 +15,3 @@ export * from "./user-achievements";
 export * from "./billing";
 export * from "./notification-preferences";
 export * from "./login-activity";
-

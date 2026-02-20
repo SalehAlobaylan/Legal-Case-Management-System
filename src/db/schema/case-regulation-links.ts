@@ -4,6 +4,7 @@ import {
   integer,
   decimal,
   boolean,
+  text,
   varchar,
   timestamp,
   uniqueIndex,
@@ -37,6 +38,10 @@ export const caseRegulationLinks = pgTable(
       onDelete: "set null",
     }),
     verifiedAt: timestamp("verified_at"),
+    evidenceSources: text("evidence_sources").default("[]").notNull(),
+    matchedWithDocuments: boolean("matched_with_documents")
+      .default(false)
+      .notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -72,5 +77,4 @@ export const caseRegulationLinksRelations = relations(
 export type CaseRegulationLink = typeof caseRegulationLinks.$inferSelect;
 export type NewCaseRegulationLink = typeof caseRegulationLinks.$inferInsert;
 export type LinkMethod = (typeof linkMethodEnum)[number];
-
 

@@ -29,6 +29,7 @@ import settingsRoutes from "./routes/settings";
 import usersRoutes from "./routes/users";
 import billingRoutes from "./routes/billing";
 import aiRoutes from "./routes/ai";
+import caseDocumentsRoutes from "./routes/case-documents";
 
 export function buildApp(opts = {}) {
   const app = Fastify({
@@ -79,6 +80,7 @@ export function buildApp(opts = {}) {
   app.register(oauthRoutes, { prefix: "/api/auth" });
   app.register(organizationsRoutes, { prefix: "/api/organizations" });
   app.register(casesRoutes, { prefix: "/api/cases" });
+  app.register(caseDocumentsRoutes, { prefix: "/api/cases" });
   app.register(regulationsRoutes, { prefix: "/api/regulations" });
   app.register(aiLinksRoutes, { prefix: "/api/ai-links" });
   app.register(dashboardRoutes, { prefix: "/api/dashboard" });
@@ -94,5 +96,4 @@ export function buildApp(opts = {}) {
 
   return app;
 }
-
 

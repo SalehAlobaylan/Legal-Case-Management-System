@@ -64,6 +64,13 @@
       "when": 1771505000000,
       "tag": "0008_basic_regulation_monitor_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1771578000000,
+      "tag": "0009_case_document_extractions",
+      "breakpoints": true
     }
   ]
 }

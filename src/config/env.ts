@@ -25,6 +25,13 @@ const envSchema = z.object({
   REG_MONITOR_POLL_SECONDS: z.coerce.number().int().min(5).default(60),
   REG_MONITOR_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(5),
   REG_MONITOR_FAILURE_RETRY_MINUTES: z.coerce.number().int().min(1).default(30),
+  CASE_DOC_EXTRACTION_ENABLED: z.coerce.boolean().default(true),
+  CASE_DOC_EXTRACTION_BATCH_SIZE: z.coerce.number().int().min(1).max(200).default(20),
+  CASE_DOC_EXTRACTION_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(3),
+  CASE_DOC_EXTRACTION_RETRY_MINUTES: z.coerce.number().int().min(1).default(20),
+  CASE_LINK_DOC_MAX_INCLUDED: z.coerce.number().int().min(0).max(50).default(5),
+  CASE_LINK_DOC_MAX_CHARS_PER_DOC: z.coerce.number().int().min(200).default(4000),
+  CASE_LINK_DOC_TOTAL_MAX_CHARS: z.coerce.number().int().min(500).default(12000),
 
   CORS_ORIGIN: z.string().default("*"),
 
