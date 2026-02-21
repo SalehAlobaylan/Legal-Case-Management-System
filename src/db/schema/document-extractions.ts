@@ -37,6 +37,22 @@ export const documentExtractions = pgTable(
     attemptCount: integer("attempt_count").default(0).notNull(),
     lastAttemptAt: timestamp("last_attempt_at"),
     nextRetryAt: timestamp("next_retry_at").defaultNow().notNull(),
+    insightsStatus: varchar("insights_status", { length: 50 })
+      .default("pending")
+      .notNull(),
+    insightsSummary: text("insights_summary"),
+    insightsHighlightsJson: text("insights_highlights_json")
+      .default("[]")
+      .notNull(),
+    insightsCaseContextHash: varchar("insights_case_context_hash", { length: 64 }),
+    insightsSourceTextHash: varchar("insights_source_text_hash", { length: 64 }),
+    insightsMethod: varchar("insights_method", { length: 100 }),
+    insightsErrorCode: varchar("insights_error_code", { length: 100 }),
+    insightsWarningsJson: text("insights_warnings_json"),
+    insightsAttemptCount: integer("insights_attempt_count").default(0).notNull(),
+    insightsLastAttemptAt: timestamp("insights_last_attempt_at"),
+    insightsNextRetryAt: timestamp("insights_next_retry_at").defaultNow().notNull(),
+    insightsUpdatedAt: timestamp("insights_updated_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -50,6 +66,15 @@ export const documentExtractions = pgTable(
       table.organizationId,
       table.status,
       table.nextRetryAt
+    ),
+    caseInsightsStatusIdx: index("doc_extract_case_insights_status_idx").on(
+      table.caseId,
+      table.insightsStatus
+    ),
+    orgInsightsRetryIdx: index("doc_extract_org_insights_retry_idx").on(
+      table.organizationId,
+      table.insightsStatus,
+      table.insightsNextRetryAt
     ),
   })
 );

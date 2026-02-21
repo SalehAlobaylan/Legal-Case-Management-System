@@ -24,6 +24,9 @@ async function main() {
       docExtractionEnabled: env.CASE_DOC_EXTRACTION_ENABLED,
       docExtractionBatchSize: env.CASE_DOC_EXTRACTION_BATCH_SIZE,
       docExtractionConcurrency: env.CASE_DOC_EXTRACTION_MAX_CONCURRENCY,
+      docInsightsEnabled: env.CASE_DOC_INSIGHTS_ENABLED,
+      docInsightsBatchSize: env.CASE_DOC_INSIGHTS_BATCH_SIZE,
+      docInsightsConcurrency: env.CASE_DOC_INSIGHTS_MAX_CONCURRENCY,
     },
     "Regulation monitor worker started"
   );
@@ -41,6 +44,10 @@ async function main() {
           extractionResult,
           "Case document extraction cycle completed"
         );
+      }
+      const insightsResult = await documentExtractionService.runPendingInsights();
+      if (insightsResult.processed > 0) {
+        logger.info(insightsResult, "Case document insights cycle completed");
       }
     } catch (error) {
       logger.error({ err: error }, "Unhandled error during regulation monitor cycle");

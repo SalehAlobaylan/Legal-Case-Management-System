@@ -68,6 +68,9 @@ const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
           extractionMethod: extraction?.extractionMethod || null,
           extractionErrorCode: extraction?.errorCode || null,
           extractionWarnings: extraction?.warnings || [],
+          insightsStatus: extraction?.insightsStatus || "pending",
+          insightsUpdatedAt: extraction?.insightsUpdatedAt || null,
+          hasInsights: extraction?.insightsStatus === "ready",
         };
       });
 

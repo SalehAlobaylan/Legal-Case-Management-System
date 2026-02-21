@@ -11,6 +11,9 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 - Dedicated regulation monitoring worker runtime
 - Hash-based regulation versioning with automatic notification fanout
 - Monitor observability endpoints (health + recent run stats)
+- Async case-document extraction queue with OCR-backed text extraction
+- Case-focused document insights lifecycle (summary + highlights) with worker processing
+- Insights stale-mark/recompute on case title/description updates
 - Global error handler
 - OpenAPI/Swagger docs at `/docs`
 - PostgreSQL + Drizzle ORM
@@ -51,6 +54,9 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `REG_MONITOR_POLL_SECONDS`: worker polling interval
 - `REG_MONITOR_MAX_CONCURRENCY`: concurrent source checks per cycle
 - `REG_MONITOR_FAILURE_RETRY_MINUTES`: retry delay for failed checks
+- `CASE_DOC_EXTRACTION_*`: document extraction queue controls
+- `CASE_DOC_INSIGHTS_*`: document insights queue controls
+- `CASE_LINK_DOC_*`: limits for document context used in AI case linking
 
 ### API overview (brief)
 - `GET /health` — health check
@@ -67,4 +73,7 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `GET /api/regulations/monitor/stats` — recent monitor run stats (admin)
 - `POST /api/ai-links/:caseId/generate` — AI suggestions (protected)
 - `GET /api/ai-links/:caseId` — list links (protected)
+- `GET /api/documents/:id/insights` — case-focused summary/highlights for a document (protected)
+- `POST /api/documents/:id/insights/refresh` — queue insights regeneration (protected)
+- `GET /api/documents/insights/health` — org-scoped insights queue health snapshot (protected)
 

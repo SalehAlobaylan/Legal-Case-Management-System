@@ -88,6 +88,30 @@ export interface ExtractDocumentResponse {
   error_code?: string | null;
 }
 
+export interface DocumentCaseInsightsInput {
+  caseText: string;
+  documentText: string;
+  documentName?: string;
+  topK?: number;
+  maxSourceChars?: number;
+}
+
+export interface DocumentCaseInsightHighlight {
+  snippet: string;
+  score: number;
+  sentence_start: number;
+  sentence_end: number;
+}
+
+export interface DocumentCaseInsightsResponse {
+  status: "ok" | "error";
+  summary: string;
+  highlights: DocumentCaseInsightHighlight[];
+  method: string;
+  warnings?: string[];
+  error_code?: string | null;
+}
+
 /**
  * AIClientService
  *
@@ -260,6 +284,42 @@ export class AIClientService {
     }
   }
 
+  async generateDocumentCaseInsights(
+    input: DocumentCaseInsightsInput
+  ): Promise<DocumentCaseInsightsResponse> {
+    try {
+      const response = await fetch(`${this.baseUrl}/documents/case-insights`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_text: input.caseText,
+          document_text: input.documentText,
+          document_name: input.documentName || "document",
+          top_k: input.topK,
+          max_source_chars: input.maxSourceChars,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `AI service error (documents/case-insights): ${response.status} ${errorText}`
+        );
+      }
+
+      return (await response.json()) as DocumentCaseInsightsResponse;
+    } catch (error) {
+      logger.error(
+        {
+          err: error,
+          documentName: input.documentName,
+        },
+        "Failed to generate document case insights from AI service"
+      );
+      throw error;
+    }
+  }
+
   /**
    * chat
    *
@@ -395,7 +455,6 @@ export interface DocumentSummaryResponse {
     description: string;
   }[];
 }
-
 
 
 

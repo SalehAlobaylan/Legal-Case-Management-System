@@ -19,6 +19,7 @@ import {
   updateCaseSchema,
 } from "./schemas";
 import type { Database } from "../../db/connection";
+import { DocumentExtractionService } from "../../services/document-extraction.service";
 
 type RequestWithUserAndDb = FastifyRequest & {
   user: {
@@ -129,12 +130,23 @@ export async function updateCaseHandler(
   const data = updateCaseSchema.parse(body as UpdateCaseInput);
 
   const caseService = new CaseService(server.db);
+  const existingCase = await caseService.getCaseById(id, user.orgId);
   const updated = await caseService.updateCase(id, user.orgId, {
     ...data,
     // Keep `filingDate` as a DATE string (or null) to match the Drizzle column type
     filingDate: data.filingDate ?? null,
     nextHearing: data.nextHearing ? new Date(data.nextHearing) : undefined,
   });
+
+  const titleChanged =
+    typeof data.title === "string" && data.title !== existingCase.title;
+  const descriptionChanged =
+    typeof data.description !== "undefined" &&
+    (data.description || "") !== (existingCase.description || "");
+  if (titleChanged || descriptionChanged) {
+    const extractionService = new DocumentExtractionService(server.db);
+    await extractionService.markCaseInsightsStale(id, user.orgId);
+  }
 
   return reply.send({ case: updated });
 }

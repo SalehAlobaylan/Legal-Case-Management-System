@@ -15,7 +15,6 @@ import {
 } from "fastify";
 import { DocumentService } from "../../services/document.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
-import { AIClientService } from "../../services/ai-client.service";
 import type { Database } from "../../db/connection";
 import * as fs from "fs";
 import * as path from "path";
@@ -95,6 +94,9 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
           extractionMethod: extraction?.extractionMethod || null,
           extractionErrorCode: extraction?.errorCode || null,
           extractionWarnings: extraction?.warnings || [],
+          insightsStatus: extraction?.insightsStatus || "pending",
+          insightsUpdatedAt: extraction?.insightsUpdatedAt || null,
+          hasInsights: extraction?.insightsStatus === "ready",
         };
       });
 
@@ -315,58 +317,152 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      const document = await documentService.getDocumentById(docIdNum, user.orgId);
+      await documentService.getDocumentById(docIdNum, user.orgId);
 
-      // Check if file exists
-      if (!fs.existsSync(document.filePath)) {
-        return reply.status(404).send({
+      const extractionService = new DocumentExtractionService(app.db);
+      const existingInsights = await extractionService.getDocumentInsightsByDocumentId(
+        docIdNum,
+        user.orgId
+      );
+      if (existingInsights.status === "ready" && existingInsights.summary) {
+        return reply.send({
+          summary: existingInsights.summary,
+          keyEntities: [],
+          effectiveDate: null,
+          clauses: [],
+        });
+      }
+
+      const freshInsights = await extractionService.generateDocumentInsightsNow(
+        docIdNum,
+        user.orgId
+      );
+      if (freshInsights?.status === "ready" && freshInsights.summary) {
+        return reply.send({
+          summary: freshInsights.summary,
+          keyEntities: [],
+          effectiveDate: null,
+          clauses: [],
+        });
+      }
+
+      const extractionStatus = await extractionService.getExtractionStatusByDocumentId(
+        docIdNum,
+        user.orgId
+      );
+      if (
+        extractionStatus.status === "pending" ||
+        extractionStatus.status === "processing"
+      ) {
+        return reply.status(422).send({
           error: {
-            code: "NOT_FOUND",
-            message: "File not found on disk",
+            code: "EXTRACTION_PENDING",
+            message:
+              "Document text extraction is still in progress. Please try again shortly.",
           },
         });
       }
 
-      try {
-        const aiClient = new AIClientService();
-        const buffer = fs.readFileSync(document.filePath);
-        const extraction = await aiClient.extractDocumentContent({
-          content: buffer,
-          fileName: document.originalName || document.fileName,
-          contentType: document.mimeType,
-        });
+      return reply.status(422).send({
+        error: {
+          code: "EXTRACTION_FAILED",
+          message:
+            extractionStatus.errorCode ||
+            "Could not extract readable text from this document",
+          warnings: extractionStatus.warnings || [],
+        },
+      });
+    }
+  );
 
-        if (extraction.status !== "ok" || !extraction.extracted_text) {
-          return reply.status(422).send({
-            error: {
-              code: "EXTRACTION_FAILED",
-              message:
-                extraction.error_code ||
-                "Could not extract readable text from this document",
-              warnings: extraction.warnings || [],
-            },
-          });
-        }
+  fastify.get(
+    "/:id/insights",
+    {
+      schema: {
+        description: "Get AI case-focused insights for a document",
+        tags: ["documents", "ai"],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { id } = request.params as { id: string };
+      const docId = parseInt(id, 10);
 
-        const summary = await aiClient.summarizeDocument(
-          extraction.extracted_text,
-          document.originalName || document.fileName
-        );
-
-        return reply.send(summary);
-      } catch (error: any) {
-        // Handle AI service unavailable
-        if (error.message?.includes("AI_SERVICE_URL is not configured") ||
-          error.message?.includes("fetch failed")) {
-          return reply.status(503).send({
-            error: {
-              code: "SERVICE_UNAVAILABLE",
-              message: "AI service is currently unavailable",
-            },
-          });
-        }
-        throw error;
+      if (isNaN(docId)) {
+        return reply.status(400).send({ message: "Invalid document ID" });
       }
+
+      const extractionService = new DocumentExtractionService(app.db);
+      const insights = await extractionService.getDocumentInsightsByDocumentId(
+        docId,
+        user.orgId
+      );
+      return reply.send({
+        documentId: docId,
+        ...insights,
+      });
+    }
+  );
+
+  fastify.post(
+    "/:id/insights/refresh",
+    {
+      schema: {
+        description: "Queue document insights recomputation",
+        tags: ["documents", "ai"],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { id } = request.params as { id: string };
+      const docId = parseInt(id, 10);
+
+      if (isNaN(docId)) {
+        return reply.status(400).send({ message: "Invalid document ID" });
+      }
+
+      const extractionService = new DocumentExtractionService(app.db);
+      await extractionService.enqueueDocumentInsights(docId, user.orgId);
+      const insights = await extractionService.getDocumentInsightsByDocumentId(
+        docId,
+        user.orgId
+      );
+
+      return reply.code(202).send({
+        documentId: docId,
+        ...insights,
+      });
+    }
+  );
+
+  fastify.get(
+    "/insights/health",
+    {
+      schema: {
+        description: "Get document insights queue health",
+        tags: ["documents", "ai"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const extractionService = new DocumentExtractionService(app.db);
+      const health = await extractionService.getInsightsQueueHealth(user.orgId);
+      return reply.send(health);
     }
   );
 

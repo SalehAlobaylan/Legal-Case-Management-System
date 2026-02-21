@@ -71,6 +71,13 @@
       "when": 1771578000000,
       "tag": "0009_case_document_extractions",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1771640000000,
+      "tag": "0010_document_case_insights",
+      "breakpoints": true
     }
   ]
 }
