@@ -50,7 +50,7 @@ interface SubscriptionGroup {
 }
 
 export class RegulationMonitorService {
-  private readonly aiClient = new AIClientService();
+  private readonly aiClient: AIClientService | null = null;
   private readonly advisoryLockId = 948233;
 
   constructor(
@@ -60,7 +60,13 @@ export class RegulationMonitorService {
       event: string,
       data: Record<string, unknown>
     ) => void
-  ) {}
+  ) {
+    if (env.AI_SERVICE_URL) {
+      this.aiClient = new AIClientService();
+    } else {
+      logger.warn("AI_SERVICE_URL not configured - regulation content extraction will be disabled");
+    }
+  }
 
   private normalizeText(text: string): string {
     return text.split(/\s+/).filter(Boolean).join(" ").trim();
@@ -331,6 +337,14 @@ export class RegulationMonitorService {
     now: Date,
     dryRun: boolean
   ): Promise<{ changed: boolean; createdVersion: boolean; failed: boolean }> {
+    if (!this.aiClient) {
+      logger.warn(
+        { regulationId: group.regulationId, sourceUrl: group.sourceUrl },
+        "Skipping regulation extraction - AI_SERVICE_URL not configured"
+      );
+      return { changed: false, createdVersion: false, failed: true };
+    }
+
     const representative = group.subscriptions[0];
 
     let extraction;
