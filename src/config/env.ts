@@ -12,7 +12,7 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().url().optional(),
 
-  JWT_SECRET: z.string().min(32),
+  JWT_SECRET: z.string().min(1),
   JWT_EXPIRES_IN: z.string().default("7d"),
 
   REDIS_HOST: z.string().default("localhost"),
