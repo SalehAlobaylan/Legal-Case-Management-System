@@ -33,6 +33,7 @@ export async function registerHandler(
   reply: FastifyReply
 ) {
   const data = registerSchema.parse(request.body);
+  const registrationType = data.registrationType ?? "personal";
 
   const authService = new AuthService(request.server.db);
   const user = await authService.register({
@@ -40,11 +41,14 @@ export async function registerHandler(
     password: data.password,
     fullName: data.fullName,
     role: data.role,
-    registrationType: data.registrationType,
-    organizationId: data.registrationType === "join" ? data.organizationId : undefined,
-    organizationName: data.registrationType === "create" ? data.organizationName : undefined,
-    country: data.registrationType === "create" ? data.country : undefined,
-    subscriptionTier: data.registrationType === "create" ? data.subscriptionTier : undefined,
+    registrationType,
+    organizationId: registrationType === "join" ? data.organizationId : undefined,
+    organizationName: registrationType === "create" ? data.organizationName : undefined,
+    country: registrationType === "create" ? data.country : undefined,
+    subscriptionTier:
+      registrationType === "create" || registrationType === "personal"
+        ? data.subscriptionTier
+        : undefined,
   });
 
   const token = request.server.jwt.sign(

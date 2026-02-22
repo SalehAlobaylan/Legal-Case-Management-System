@@ -41,7 +41,7 @@ export class AuthService {
     password: string;
     fullName: string;
     role?: UserRole;
-    registrationType: "join" | "create";
+    registrationType: "personal" | "join" | "create";
     organizationId?: number;
     organizationName?: string;
     country?: string;
@@ -62,19 +62,22 @@ export class AuthService {
 
     const passwordHash = await hashPassword(data.password);
     let organizationId: number;
+    let shouldAttachPersonalOwner = false;
 
     if (data.registrationType === "join") {
-      // Mode 1: Join existing organization
       const orgService = this.getOrganizationService();
       const org = await orgService.getById(data.organizationId!);
 
       if (!org) {
-        throw new NotFoundError("Organization not found");
+        throw new NotFoundError("Organization");
+      }
+
+      if (org.isPersonal) {
+        throw new ConflictError("Cannot join a personal workspace");
       }
 
       organizationId = org.id;
-    } else {
-      // Mode 2: Create new organization
+    } else if (data.registrationType === "create") {
       const orgService = this.getOrganizationService();
       const newOrg = await orgService.create({
         name: data.organizationName!,
@@ -83,10 +86,22 @@ export class AuthService {
       });
 
       organizationId = newOrg.id;
+    } else {
+      const orgService = this.getOrganizationService();
+      const personalOrg = await orgService.createPersonalOrganization({
+        ownerDisplayName: data.fullName,
+        country: data.country || "SA",
+        subscriptionTier: data.subscriptionTier || "free",
+      });
+
+      organizationId = personalOrg.id;
+      shouldAttachPersonalOwner = true;
     }
 
     // Determine role: admin for create mode, lawyer for join mode (or override if provided)
-    const role = data.role ?? (data.registrationType === "create" ? "admin" : "lawyer");
+    const role =
+      data.role ??
+      (data.registrationType === "join" ? "lawyer" : "admin");
 
     const [newUser] = await this.db
       .insert(users)
@@ -98,6 +113,11 @@ export class AuthService {
         role,
       })
       .returning();
+
+    if (shouldAttachPersonalOwner) {
+      const orgService = this.getOrganizationService();
+      await orgService.attachPersonalOwner(organizationId, newUser.id);
+    }
 
     return this.sanitizeUser(newUser);
   }

@@ -77,3 +77,54 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `POST /api/documents/:id/insights/refresh` — queue insights regeneration (protected)
 - `GET /api/documents/insights/health` — org-scoped insights queue health snapshot (protected)
 
+### Organization & Membership Flows (New)
+- Personal-first onboarding:
+  - `POST /api/auth/register` now supports `registrationType: "personal"` (default when omitted).
+  - Personal signup automatically creates a hidden personal workspace organization and assigns the user as `admin`.
+- Create organization after account:
+  - `POST /api/organizations` now creates an organization and switches the authenticated user into it as `admin`.
+  - Response includes `{ organization, user, token }` so clients can refresh session state immediately.
+- Invitation-based joining:
+  - `POST /api/settings/team/invite` (admin): creates email-targeted invitation with single-use code.
+  - `POST /api/settings/team/invitations/accept` (authenticated): accepts code, validates email match + expiry, switches org, returns refreshed token.
+- Membership administration:
+  - `GET /api/settings/team` lists current org members and org metadata.
+  - `PUT /api/settings/team/members/:memberId/role` (admin) changes member role.
+  - `DELETE /api/settings/team/members/:memberId` (admin) removes a member and moves them to their personal workspace.
+  - `POST /api/settings/organization/leave` lets a user leave current org and move to personal workspace.
+- Last-admin edge case:
+  - If the last admin leaves/is removed, the system auto-promotes a replacement member by role priority:
+    - `senior_lawyer` > `lawyer` > `paralegal` > `clerk`, then oldest member.
+
+### New Database Objects
+- `organizations` additions:
+  - `is_personal boolean not null default false`
+  - `personal_owner_user_id uuid null`
+- new `organization_invitations` table:
+  - stores invitation email, role, status, expiry, issuer, accepter, and hashed code
+  - unique pending invitation per `(organization_id, email)`
+  - single-use hashed invitation codes
+
+### Registration Payloads
+- Personal (default):
+```json
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "confirmPassword": "password123",
+  "fullName": "User Name",
+  "registrationType": "personal"
+}
+```
+- Create organization:
+```json
+{
+  "email": "admin@example.com",
+  "password": "password123",
+  "confirmPassword": "password123",
+  "fullName": "Admin Name",
+  "registrationType": "create",
+  "organizationName": "My Law Firm"
+}
+```
+

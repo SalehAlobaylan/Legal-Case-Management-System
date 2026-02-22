@@ -30,7 +30,8 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
   } as const;
 
   // POST /api/auth/register
-  // - Creates a new user account with dual-mode support:
+  // - Creates a new user account with multiple modes:
+  //   - "personal": Creates a personal workspace automatically (default)
   //   - "join": Add to existing organization (default role: lawyer)
   //   - "create": Create new organization (default role: admin)
   // - Returns a JWT plus the sanitized user object.
@@ -42,6 +43,21 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ["auth"],
         body: {
           oneOf: [
+            {
+              type: "object",
+              required: ["email", "password", "confirmPassword", "fullName"],
+              properties: {
+                registrationType: { const: "personal" },
+                email: { type: "string", format: "email" },
+                password: { type: "string", minLength: 4 },
+                confirmPassword: { type: "string" },
+                fullName: { type: "string", minLength: 2 },
+                role: {
+                  type: "string",
+                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+                },
+              },
+            },
             {
               type: "object",
               required: ["registrationType", "email", "password", "confirmPassword", "fullName", "organizationId"],
@@ -181,4 +197,3 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
 };
 
 export default authRoutes;
-

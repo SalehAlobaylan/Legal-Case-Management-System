@@ -94,10 +94,10 @@ export class OAuthService {
       return this.sanitizeUser(updated);
     }
 
-    // Case 4: New user - create account with default organization
+    // Case 4: New user - create account with personal workspace
     const orgService = this.getOrganizationService();
-    const newOrg = await orgService.create({
-      name: `${name}'s Organization`,
+    const newOrg = await orgService.createPersonalOrganization({
+      ownerDisplayName: name || email.split("@")[0],
       country: "SA",
       subscriptionTier: "free",
     });
@@ -115,6 +115,8 @@ export class OAuthService {
         passwordHash: "",
       })
       .returning();
+
+    await orgService.attachPersonalOwner(newOrg.id, newUser.id);
 
     return this.sanitizeUser(newUser);
   }

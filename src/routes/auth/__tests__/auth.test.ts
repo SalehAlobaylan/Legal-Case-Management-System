@@ -19,10 +19,11 @@ describe("Auth Routes", () => {
       method: "POST",
       url: "/api/auth/register",
       payload: {
+        registrationType: "personal",
         email,
         password: "password123",
+        confirmPassword: "password123",
         fullName: "Test User",
-        organizationId: 1,
       },
     });
 
@@ -30,5 +31,4 @@ describe("Auth Routes", () => {
     expect(response.json()).toHaveProperty("token");
   });
 });
-
 

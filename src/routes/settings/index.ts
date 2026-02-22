@@ -15,11 +15,13 @@ import {
 } from "fastify";
 import { db } from "../../db/connection";
 import { organizations } from "../../db/schema/organizations";
-import { users } from "../../db/schema/users";
+import { type UserRole } from "../../db/schema/users";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { NotificationPreferencesService } from "../../services/notification-preferences.service";
 import { SecurityService } from "../../services/security.service";
+import { TeamService } from "../../services/team.service";
+import { createTokenPayload } from "../../utils/jwt";
 
 type RequestWithUser = FastifyRequest & {
     user: {
@@ -54,6 +56,19 @@ const updateOrgSchema = z.object({
     contactInfo: z.string().optional(),
 });
 
+const inviteTeamMemberSchema = z.object({
+    email: z.string().email(),
+    role: z.enum(["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"]),
+});
+
+const acceptInviteSchema = z.object({
+    code: z.string().min(8),
+});
+
+const updateMemberRoleSchema = z.object({
+    role: z.enum(["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"]),
+});
+
 const changePasswordSchema = z.object({
     currentPassword: z.string().min(1),
     newPassword: z.string().min(8),
@@ -66,6 +81,7 @@ const changePasswordSchema = z.object({
 const settingsRoutes: FastifyPluginAsync = async (fastify) => {
     const app = fastify as AuthenticatedFastifyInstance;
     const prefsService = new NotificationPreferencesService(db);
+    const teamService = new TeamService(db);
 
     // All routes require authentication
     app.addHook("onRequest", app.authenticate);
@@ -207,21 +223,18 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
         },
         async (request: FastifyRequest, reply: FastifyReply) => {
             const { user } = request as RequestWithUser;
+            const members = await teamService.listMembers(user.orgId);
+            const [organization] = await db
+                .select()
+                .from(organizations)
+                .where(eq(organizations.id, user.orgId))
+                .limit(1);
 
-            const membersList = await db
-                .select({
-                    id: users.id,
-                    fullName: users.fullName,
-                    email: users.email,
-                    role: users.role,
-                })
-                .from(users)
-                .where(eq(users.organizationId, user.orgId));
-
-            // Add status field (all users are active by default in this MVP)
-            const members = membersList.map(m => ({ ...m, status: "active" }));
-
-            return reply.send({ members });
+            return reply.send({
+                members,
+                total: members.length,
+                organization,
+            });
         }
     );
 
@@ -248,22 +261,205 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
             } as FastifySchema,
         },
         async (request: FastifyRequest, reply: FastifyReply) => {
-            const { user, body } = request as RequestWithUser & { body: { email: string; role: string } };
+            const { user, body } = request as RequestWithUser & { body: unknown };
 
             // Check if user is admin
             if (user.role !== "admin") {
                 return reply.status(403).send({ message: "Admin access required" });
             }
 
-            const { email, role } = body;
-
-            // MVP: Log invitation, actual email sending to be implemented
-            console.log(`Invitation sent to ${email} with role ${role} for org ${user.orgId}`);
+            const data = inviteTeamMemberSchema.parse(body);
+            const { invitation, invitationCode } = await teamService.inviteMember({
+                actorUserId: user.id,
+                organizationId: user.orgId,
+                email: data.email,
+                role: data.role as UserRole,
+            });
 
             return reply.send({
-                message: "Invitation sent",
-                email,
-                role,
+                success: true,
+                message: "Invitation created successfully",
+                inviteId: invitation.id,
+                email: invitation.email,
+                role: invitation.role,
+                invitationCode,
+                expiresAt: invitation.expiresAt,
+                emailSent: false,
+            });
+        }
+    );
+
+    /**
+     * GET /api/settings/team/invitations
+     *
+     * - Returns organization invitations (admin only).
+     */
+    fastify.get(
+        "/team/invitations",
+        {
+            schema: {
+                description: "List team invitations",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const invitations = await teamService.listInvitations(user.orgId);
+            return reply.send({ invitations, total: invitations.length });
+        }
+    );
+
+    /**
+     * POST /api/settings/team/invitations/accept
+     *
+     * - Accept invitation code and switch user to that organization.
+     */
+    fastify.post(
+        "/team/invitations/accept",
+        {
+            schema: {
+                description: "Accept invitation code",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user, body } = request as RequestWithUser & { body: unknown };
+            const data = acceptInviteSchema.parse(body);
+            const result = await teamService.acceptInvitation({
+                userId: user.id,
+                code: data.code,
+            });
+
+            const token = request.server.jwt.sign(
+                createTokenPayload({
+                    id: result.user.id,
+                    email: result.user.email,
+                    role: result.user.role,
+                    organizationId: result.user.organizationId,
+                })
+            );
+
+            return reply.send({
+                success: true,
+                message: "Invitation accepted",
+                user: result.user,
+                organization: result.organization,
+                token,
+            });
+        }
+    );
+
+    /**
+     * PUT /api/settings/team/members/:memberId/role
+     *
+     * - Change member role (admin only).
+     */
+    fastify.put(
+        "/team/members/:memberId/role",
+        {
+            schema: {
+                description: "Change team member role",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user, body } = request as RequestWithUser & { body: unknown };
+            const { memberId } = request.params as { memberId: string };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const data = updateMemberRoleSchema.parse(body);
+            const member = await teamService.changeMemberRole({
+                actorUserId: user.id,
+                organizationId: user.orgId,
+                memberId,
+                role: data.role as UserRole,
+            });
+
+            return reply.send({
+                success: true,
+                member,
+            });
+        }
+    );
+
+    /**
+     * DELETE /api/settings/team/members/:memberId
+     *
+     * - Remove member from organization (admin only).
+     */
+    fastify.delete(
+        "/team/members/:memberId",
+        {
+            schema: {
+                description: "Remove team member",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+            const { memberId } = request.params as { memberId: string };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const removedMember = await teamService.removeMember({
+                actorUserId: user.id,
+                organizationId: user.orgId,
+                memberId,
+            });
+
+            return reply.send({
+                success: true,
+                message: "Member removed from organization",
+                member: removedMember,
+            });
+        }
+    );
+
+    /**
+     * POST /api/settings/organization/leave
+     *
+     * - Leave current organization and move to personal workspace.
+     */
+    fastify.post(
+        "/organization/leave",
+        {
+            schema: {
+                description: "Leave current organization",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+
+            const updatedUser = await teamService.leaveOrganization(user.id);
+            const token = request.server.jwt.sign(
+                createTokenPayload({
+                    id: updatedUser.id,
+                    email: updatedUser.email,
+                    role: updatedUser.role,
+                    organizationId: updatedUser.organizationId,
+                })
+            );
+
+            return reply.send({
+                success: true,
+                message: "You left the organization successfully",
+                user: updatedUser,
+                token,
             });
         }
     );

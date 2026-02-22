@@ -13,7 +13,10 @@
  */
 
 import { FastifyPluginAsync } from "fastify";
+import { eq } from "drizzle-orm";
 import { OrganizationService } from "../../services/organization.service";
+import { users } from "../../db/schema";
+import { createTokenPayload } from "../../utils/jwt";
 
 const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
   const organizationResponseSchema = {
@@ -132,6 +135,17 @@ const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
             type: "object",
             properties: {
               organization: organizationResponseSchema,
+              user: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  email: { type: "string", format: "email" },
+                  fullName: { type: "string" },
+                  organizationId: { type: "number" },
+                  role: { type: "string" },
+                },
+              },
+              token: { type: "string" },
             },
           },
           409: {
@@ -145,6 +159,12 @@ const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const organizationService = new OrganizationService(request.server.db);
+      const authUser = request.user as {
+        id: string;
+        email: string;
+        role: string;
+        orgId: number;
+      };
       const data = request.body as {
         name: string;
         country?: string;
@@ -155,7 +175,28 @@ const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
 
       try {
         const organization = await organizationService.create(data);
-        return reply.code(201).send({ organization });
+        const [updatedUser] = await request.server.db
+          .update(users)
+          .set({
+            organizationId: organization.id,
+            role: "admin",
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, authUser.id))
+          .returning();
+
+        const { passwordHash, googleId, isOAuthUser, ...safeUser } = updatedUser;
+
+        const token = request.server.jwt.sign(
+          createTokenPayload({
+            id: safeUser.id,
+            email: safeUser.email,
+            role: safeUser.role,
+            organizationId: safeUser.organizationId,
+          })
+        );
+
+        return reply.code(201).send({ organization, user: safeUser, token });
       } catch (error) {
         if (error instanceof Error && error.message === "Organization already exists") {
           return reply.code(409).send({ error: error.message });
