@@ -128,3 +128,13 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 }
 ```
 
+### Testing
+
+```bash
+npm test              # Run all tests
+npm run test:watch    # Watch mode
+npm run test:coverage # Generate coverage report
+```
+
+Tests use Jest with `ts-jest` and run against a test database. Set `DATABASE_URL` for test environment.
+
