@@ -8,6 +8,8 @@ import { regulationVersions } from "./schema/regulation-versions";
 import { caseRegulationLinks } from "./schema/case-regulation-links";
 import { documents } from "./schema/documents";
 import { notifications } from "./schema/notifications";
+import { userActivities } from "./schema/user-activities";
+import { userAchievements } from "./schema/user-achievements";
 import { sql } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
@@ -20,7 +22,6 @@ async function hashPassword(password: string): Promise<string> {
 
 async function clearDatabase() {
   console.log("🗑️  Clearing existing data...");
-  // Delete in order respecting foreign keys
   await db.delete(notifications);
   await db.delete(documents);
   await db.delete(caseRegulationLinks);
@@ -28,10 +29,11 @@ async function clearDatabase() {
   await db.delete(regulations);
   await db.delete(cases);
   await db.delete(clients);
+  await db.delete(userAchievements);
+  await db.delete(userActivities);
   await db.delete(users);
   await db.delete(organizations);
 
-  // Reset sequences
   await db.execute(sql`ALTER SEQUENCE organizations_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE clients_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE cases_id_seq RESTART WITH 1`);
@@ -40,13 +42,14 @@ async function clearDatabase() {
   await db.execute(sql`ALTER SEQUENCE case_regulation_links_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE documents_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE notifications_id_seq RESTART WITH 1`);
+  await db.execute(sql`ALTER SEQUENCE user_activities_id_seq RESTART WITH 1`);
+  await db.execute(sql`ALTER SEQUENCE user_achievements_id_seq RESTART WITH 1`);
   console.log("   ✓ Database cleared\n");
 }
 
 async function main() {
   console.log("🌱 Seeding database...\n");
 
-  // Helper to check if data exists
   const existingOrgs = await db.select().from(organizations).limit(1);
   if (existingOrgs.length > 0) {
     if (FORCE_MODE) {
@@ -63,7 +66,6 @@ async function main() {
   // ==========================================
   console.log("📁 Seeding organizations...");
 
-  // Org 1: Al-Faisal Law Firm
   const [insertedOrg] = await db.insert(organizations).values({
     name: "Al-Faisal Law Firm",
     licenseNumber: "LCMS-2024-001",
@@ -73,7 +75,6 @@ async function main() {
   const orgId = insertedOrg.id;
   console.log(`   ✓ Created organization: "${insertedOrg.name}" (ID: ${orgId})`);
 
-  // Org 2: Riyadh Legal Consultants (for testing)
   const [insertedOrg2] = await db.insert(organizations).values({
     name: "Riyadh Legal Consultants",
     licenseNumber: "LCMS-2024-002",
@@ -88,18 +89,20 @@ async function main() {
   // ==========================================
   console.log("👥 Seeding users...");
 
-  // Easy passwords for testing
   const simplePassword = await hashPassword("test123");
   const defaultPassword = await hashPassword("password123");
 
   const usersData = [
-    // Al-Faisal Law Firm users
     {
       organizationId: orgId,
       email: "ahmed@alfaisal-law.sa",
       passwordHash: defaultPassword,
       fullName: "Ahmed Al-Faisal",
       role: "admin" as const,
+      phone: "+966 50 111 2233",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Senior attorney with 15+ years of experience in commercial litigation and corporate law. Founding partner at Al-Faisal Law Firm.",
+      specialization: "Corporate Law",
     },
     {
       organizationId: orgId,
@@ -107,6 +110,10 @@ async function main() {
       passwordHash: defaultPassword,
       fullName: "Fatima Al-Zahrani",
       role: "senior_lawyer" as const,
+      phone: "+966 50 444 5566",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Specialized in labor law and employment disputes. Successfully handled over 200 labor cases.",
+      specialization: "Labor Law",
     },
     {
       organizationId: orgId,
@@ -114,6 +121,10 @@ async function main() {
       passwordHash: defaultPassword,
       fullName: "Omar Hassan",
       role: "lawyer" as const,
+      phone: "+966 50 777 8899",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Commercial litigation attorney focusing on contract disputes and construction law.",
+      specialization: "Commercial Law",
     },
     {
       organizationId: orgId,
@@ -121,6 +132,10 @@ async function main() {
       passwordHash: defaultPassword,
       fullName: "Sara Al-Otaibi",
       role: "paralegal" as const,
+      phone: "+966 50 222 3344",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Experienced paralegal specializing in legal research and document preparation.",
+      specialization: "Legal Research",
     },
     {
       organizationId: orgId,
@@ -128,14 +143,21 @@ async function main() {
       passwordHash: defaultPassword,
       fullName: "Khalid Al-Mutairi",
       role: "clerk" as const,
+      phone: "+966 50 666 7788",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Court clerk with expertise in case management and filing procedures.",
+      specialization: "Case Management",
     },
-    // Riyadh Legal Consultants users (EASY CREDENTIALS FOR TESTING)
     {
       organizationId: orgId2,
       email: "admin@test.com",
       passwordHash: simplePassword,
       fullName: "Test Admin",
       role: "admin" as const,
+      phone: "+966 50 000 1111",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Test administrator account",
+      specialization: "General Practice",
     },
     {
       organizationId: orgId2,
@@ -143,6 +165,10 @@ async function main() {
       passwordHash: simplePassword,
       fullName: "Test Lawyer",
       role: "lawyer" as const,
+      phone: "+966 50 000 2222",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Test lawyer account",
+      specialization: "Commercial Law",
     },
     {
       organizationId: orgId2,
@@ -150,19 +176,22 @@ async function main() {
       passwordHash: simplePassword,
       fullName: "Test Paralegal",
       role: "paralegal" as const,
+      phone: "+966 50 000 3333",
+      location: "Riyadh, Saudi Arabia",
+      bio: "Test paralegal account",
+      specialization: "Legal Research",
     },
   ];
 
   const insertedUsers = await db.insert(users).values(usersData).returning();
-  console.log(`   ✓ Created ${insertedUsers.length} users:`);
+  console.log(`   ✓ Created ${insertedUsers.length} users`);
   insertedUsers.forEach((u) => console.log(`     - ${u.fullName} (${u.role})`));
 
-  // Map users by role for later use
   const userMap = {
-    admin: insertedUsers.find((u) => u.role === "admin")!,
+    admin: insertedUsers.find((u) => u.role === "admin" && u.organizationId === orgId)!,
     seniorLawyer: insertedUsers.find((u) => u.role === "senior_lawyer")!,
-    lawyer: insertedUsers.find((u) => u.role === "lawyer")!,
-    paralegal: insertedUsers.find((u) => u.role === "paralegal")!,
+    lawyer: insertedUsers.find((u) => u.role === "lawyer" && u.organizationId === orgId)!,
+    paralegal: insertedUsers.find((u) => u.role === "paralegal" && u.organizationId === orgId)!,
     clerk: insertedUsers.find((u) => u.role === "clerk")!,
   };
 
@@ -221,19 +250,48 @@ async function main() {
       notes: "Employment termination dispute.",
       status: "active" as const,
     },
+    {
+      organizationId: orgId,
+      name: "AlRajhi Holding",
+      type: "corporate" as const,
+      email: "legal@alrajhi-holding.sa",
+      phone: "+966 11 888 9999",
+      address: "King Financial District, Riyadh",
+      notes: "Major investment holding company.",
+      status: "active" as const,
+    },
   ];
 
   const insertedClients = await db.insert(clients).values(clientsData).returning();
   console.log(`   ✓ Created ${insertedClients.length} clients`);
 
+  const clientMap = {
+    techSolutions: insertedClients[0],
+    alAmoudi: insertedClients[1],
+    alFahman: insertedClients[2],
+    gulfConstruction: insertedClients[3],
+    alDosari: insertedClients[4],
+    alRajhi: insertedClients[5],
+  };
+
   // ==========================================
   // 4. CASES
   // ==========================================
   console.log("📋 Seeding cases...");
+
+  const now = new Date();
+  const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const twoMonthsAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+  const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+
   const casesData = [
+    // Open cases
     {
       organizationId: orgId,
-      caseNumber: "C-2024-001",
+      caseNumber: "C-2025-001",
       title: "Al-Amoudi vs. TechSolutions Ltd",
       description: "Labor dispute regarding wrongful termination and unpaid compensation.",
       caseType: "labor" as const,
@@ -241,12 +299,26 @@ async function main() {
       clientInfo: "Mohammed Al-Amoudi",
       assignedLawyerId: userMap.seniorLawyer.id,
       courtJurisdiction: "Riyadh Labor Court",
-      filingDate: "2024-12-01",
-      nextHearing: new Date("2025-01-20T09:00:00Z"),
+      filingDate: threeDaysAgo.toISOString().split("T")[0],
+      nextHearing: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
     },
     {
       organizationId: orgId,
-      caseNumber: "C-2024-002",
+      caseNumber: "C-2025-002",
+      title: "AlRajhi Contract Dispute",
+      description: "Contract breach claim regarding software development agreement.",
+      caseType: "commercial" as const,
+      status: "open" as const,
+      clientInfo: "AlRajhi Holding",
+      assignedLawyerId: userMap.admin.id,
+      courtJurisdiction: "Riyadh Commercial Court",
+      filingDate: oneWeekAgo.toISOString().split("T")[0],
+      nextHearing: new Date(now.getTime() + 21 * 24 * 60 * 60 * 1000),
+    },
+    // In Progress cases
+    {
+      organizationId: orgId,
+      caseNumber: "C-2024-045",
       title: "Estate of Sheikh H. Al-Fahman",
       description: "Inheritance dispute involving real estate and financial assets.",
       caseType: "civil" as const,
@@ -254,12 +326,26 @@ async function main() {
       clientInfo: "Al-Fahman Family Estate",
       assignedLawyerId: userMap.admin.id,
       courtJurisdiction: "Dammam Civil Court",
-      filingDate: "2024-11-15",
-      nextHearing: new Date("2025-02-10T10:00:00Z"),
+      filingDate: twoWeeksAgo.toISOString().split("T")[0],
+      nextHearing: new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000),
     },
     {
       organizationId: orgId,
-      caseNumber: "C-2024-003",
+      caseNumber: "C-2024-044",
+      title: "TechSolutions Shareholder Agreement",
+      description: "Dispute over shareholder rights and equity distribution.",
+      caseType: "commercial" as const,
+      status: "in_progress" as const,
+      clientInfo: "TechSolutions Ltd",
+      assignedLawyerId: userMap.lawyer.id,
+      courtJurisdiction: "Riyadh Commercial Court",
+      filingDate: oneMonthAgo.toISOString().split("T")[0],
+      nextHearing: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+    },
+    // Pending Hearing cases
+    {
+      organizationId: orgId,
+      caseNumber: "C-2024-043",
       title: "Construction Liability Case",
       description: "Contract dispute and construction defects liability claim.",
       caseType: "commercial" as const,
@@ -267,25 +353,26 @@ async function main() {
       clientInfo: "Gulf Construction Co.",
       assignedLawyerId: userMap.lawyer.id,
       courtJurisdiction: "Riyadh Commercial Court",
-      filingDate: "2024-10-20",
-      nextHearing: new Date("2025-01-15T11:00:00Z"),
+      filingDate: twoMonthsAgo.toISOString().split("T")[0],
+      nextHearing: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000),
     },
     {
       organizationId: orgId,
-      caseNumber: "C-2024-004",
+      caseNumber: "C-2024-042",
       title: "Al-Dosari Employment Termination",
       description: "Dispute over employment contract termination and severance pay.",
       caseType: "labor" as const,
-      status: "open" as const,
+      status: "pending_hearing" as const,
       clientInfo: "Nasser Al-Dosari",
       assignedLawyerId: userMap.seniorLawyer.id,
       courtJurisdiction: "Dammam Labor Court",
-      filingDate: "2024-12-10",
-      nextHearing: new Date("2025-02-01T09:30:00Z"),
+      filingDate: threeMonthsAgo.toISOString().split("T")[0],
+      nextHearing: new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000),
     },
+    // Closed cases (for win rate calculation)
     {
       organizationId: orgId,
-      caseNumber: "C-2023-015",
+      caseNumber: "C-2024-030",
       title: "TechSolutions IP Dispute",
       description: "Intellectual property dispute with former partner.",
       caseType: "commercial" as const,
@@ -293,21 +380,47 @@ async function main() {
       clientInfo: "TechSolutions Ltd",
       assignedLawyerId: userMap.admin.id,
       courtJurisdiction: "Riyadh Commercial Court",
-      filingDate: "2023-06-01",
-      nextHearing: null,
+      filingDate: threeMonthsAgo.toISOString().split("T")[0],
+    },
+    {
+      organizationId: orgId,
+      caseNumber: "C-2024-028",
+      title: "AlGosaibi Debt Collection",
+      description: "Commercial debt collection for unpaid invoices.",
+      caseType: "commercial" as const,
+      status: "closed" as const,
+      clientInfo: "TechSolutions Ltd",
+      assignedLawyerId: userMap.lawyer.id,
+      courtJurisdiction: "Riyadh Commercial Court",
+      filingDate: twoMonthsAgo.toISOString().split("T")[0],
+    },
+    {
+      organizationId: orgId,
+      caseNumber: "C-2024-025",
+      title: "Al-Yami Labor Case",
+      description: "Wrongful termination claim settled in favor of client.",
+      caseType: "labor" as const,
+      status: "closed" as const,
+      clientInfo: "Individual Client",
+      assignedLawyerId: userMap.seniorLawyer.id,
+      courtJurisdiction: "Riyadh Labor Court",
+      filingDate: oneMonthAgo.toISOString().split("T")[0],
     },
   ];
 
   const insertedCases = await db.insert(cases).values(casesData).returning();
   console.log(`   ✓ Created ${insertedCases.length} cases`);
 
-  // Map cases for linking
   const caseMap = {
     amoudi: insertedCases[0],
-    alfahman: insertedCases[1],
-    construction: insertedCases[2],
-    dosari: insertedCases[3],
-    techIP: insertedCases[4],
+    alRajhi: insertedCases[1],
+    alfahman: insertedCases[2],
+    techShareholder: insertedCases[3],
+    construction: insertedCases[4],
+    dosari: insertedCases[5],
+    techIP: insertedCases[6],
+    algosaibi: insertedCases[7],
+    alyami: insertedCases[8],
   };
 
   // ==========================================
@@ -374,7 +487,6 @@ async function main() {
   const insertedRegs = await db.insert(regulations).values(regulationsData).returning();
   console.log(`   ✓ Created ${insertedRegs.length} regulations`);
 
-  // Map regulations for linking
   const regMap = {
     laborLaw: insertedRegs[0],
     commercialCourt: insertedRegs[1],
@@ -392,14 +504,14 @@ async function main() {
     {
       regulationId: regMap.laborLaw.id,
       versionNumber: 1,
-      content: "Original Saudi Labor Law establishing worker rights and employer obligations. This law covers employment contracts, wages, work hours, vacations, end-of-service benefits, and dispute resolution procedures.",
+      content: "Original Saudi Labor Law establishing worker rights and employer obligations.",
       contentHash: "abc123def456",
       createdBy: "system" as const,
     },
     {
       regulationId: regMap.laborArt77.id,
       versionNumber: 1,
-      content: "Amendment to Article 77 regarding compensation calculation for arbitrary dismissal. New formula for calculating end-of-service benefits based on years of service and last salary.",
+      content: "Amendment to Article 77 regarding compensation calculation for arbitrary dismissal.",
       contentHash: "def456ghi789",
       createdBy: "system" as const,
     },
@@ -420,7 +532,7 @@ async function main() {
       method: "ai" as const,
       verified: true,
       verifiedBy: userMap.seniorLawyer.id,
-      verifiedAt: new Date("2024-12-05T00:00:00Z"),
+      verifiedAt: new Date(),
     },
     {
       caseId: caseMap.amoudi.id,
@@ -438,7 +550,7 @@ async function main() {
       method: "manual" as const,
       verified: true,
       verifiedBy: userMap.admin.id,
-      verifiedAt: new Date("2024-11-20T00:00:00Z"),
+      verifiedAt: new Date(),
     },
     {
       caseId: caseMap.construction.id,
@@ -447,7 +559,7 @@ async function main() {
       method: "ai" as const,
       verified: true,
       verifiedBy: userMap.lawyer.id,
-      verifiedAt: new Date("2024-10-25T00:00:00Z"),
+      verifiedAt: new Date(),
     },
     {
       caseId: caseMap.construction.id,
@@ -456,7 +568,16 @@ async function main() {
       method: "ai" as const,
       verified: true,
       verifiedBy: userMap.lawyer.id,
-      verifiedAt: new Date("2024-10-28T00:00:00Z"),
+      verifiedAt: new Date(),
+    },
+    {
+      caseId: caseMap.techIP.id,
+      regulationId: regMap.commercialCourt.id,
+      similarityScore: "0.8900",
+      method: "manual" as const,
+      verified: true,
+      verifiedBy: userMap.admin.id,
+      verifiedAt: new Date(),
     },
   ];
 
@@ -487,6 +608,15 @@ async function main() {
       uploadedBy: userMap.seniorLawyer.id,
     },
     {
+      caseId: caseMap.amoudi.id,
+      fileName: "salary_slips.pdf",
+      originalName: "Salary Slips.pdf",
+      filePath: "/uploads/cases/1/salary_slips.pdf",
+      fileSize: 512000,
+      mimeType: "application/pdf",
+      uploadedBy: userMap.paralegal.id,
+    },
+    {
       caseId: caseMap.alfahman.id,
       fileName: "estate_inventory.docx",
       originalName: "Estate Inventory Report.docx",
@@ -504,13 +634,221 @@ async function main() {
       mimeType: "application/pdf",
       uploadedBy: userMap.lawyer.id,
     },
+    {
+      caseId: caseMap.dosari.id,
+      fileName: "employment_agreement.pdf",
+      originalName: "Employment Agreement.pdf",
+      filePath: "/uploads/cases/4/employment_agreement.pdf",
+      fileSize: 350000,
+      mimeType: "application/pdf",
+      uploadedBy: userMap.seniorLawyer.id,
+    },
   ];
 
   const insertedDocs = await db.insert(documents).values(docsData).returning();
   console.log(`   ✓ Created ${insertedDocs.length} documents`);
 
   // ==========================================
-  // 9. NOTIFICATIONS
+  // 9. USER ACTIVITIES (for profile activity log)
+  // ==========================================
+  console.log("📊 Seeding user activities...");
+
+  const activitiesData = [
+    // Case activities
+    {
+      userId: userMap.seniorLawyer.id,
+      type: "case" as const,
+      action: "created" as const,
+      title: "New case created: Al-Amoudi vs. TechSolutions",
+      referenceId: caseMap.amoudi.id,
+      createdAt: threeDaysAgo,
+    },
+    {
+      userId: userMap.seniorLawyer.id,
+      type: "case" as const,
+      action: "updated" as const,
+      title: "Updated case status: Al-Amoudi case to Open",
+      referenceId: caseMap.amoudi.id,
+      createdAt: new Date(threeDaysAgo.getTime() + 2 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.admin.id,
+      type: "case" as const,
+      action: "created" as const,
+      title: "New case created: AlRajhi Contract Dispute",
+      referenceId: caseMap.alRajhi.id,
+      createdAt: oneWeekAgo,
+    },
+    {
+      userId: userMap.admin.id,
+      type: "case" as const,
+      action: "updated" as const,
+      title: "Updated case details: Al-Fahman Estate",
+      referenceId: caseMap.alfahman.id,
+      createdAt: new Date(oneWeekAgo.getTime() + 4 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.lawyer.id,
+      type: "case" as const,
+      action: "updated" as const,
+      title: "Updated case status: Construction case to Pending Hearing",
+      referenceId: caseMap.construction.id,
+      createdAt: twoWeeksAgo,
+    },
+    {
+      userId: userMap.lawyer.id,
+      type: "case" as const,
+      action: "closed" as const,
+      title: "Case closed: AlGosaibi Debt Collection",
+      referenceId: caseMap.algosaibi.id,
+      createdAt: twoMonthsAgo,
+    },
+    // Document activities
+    {
+      userId: userMap.seniorLawyer.id,
+      type: "document" as const,
+      action: "uploaded" as const,
+      title: "Uploaded: Employment Contract (Al-Amoudi)",
+      referenceId: insertedDocs[0].id,
+      createdAt: new Date(threeDaysAgo.getTime() + 1 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.paralegal.id,
+      type: "document" as const,
+      action: "uploaded" as const,
+      title: "Uploaded: Salary Slips (Al-Amoudi)",
+      referenceId: insertedDocs[2].id,
+      createdAt: new Date(threeDaysAgo.getTime() + 3 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.lawyer.id,
+      type: "document" as const,
+      action: "uploaded" as const,
+      title: "Uploaded: Construction Contract",
+      referenceId: insertedDocs[4].id,
+      createdAt: twoWeeksAgo,
+    },
+    // Regulation activities
+    {
+      userId: userMap.seniorLawyer.id,
+      type: "regulation" as const,
+      action: "reviewed" as const,
+      title: "Reviewed regulation: Saudi Labor Law (Al-Amoudi case)",
+      referenceId: regMap.laborLaw.id,
+      createdAt: new Date(threeDaysAgo.getTime() + 5 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.admin.id,
+      type: "regulation" as const,
+      action: "reviewed" as const,
+      title: "Verified regulation match: Civil Transactions Law",
+      referenceId: regMap.civilTransactions.id,
+      createdAt: oneWeekAgo,
+    },
+    {
+      userId: userMap.lawyer.id,
+      type: "regulation" as const,
+      action: "reviewed" as const,
+      title: "Verified regulation: Commercial Court Law",
+      referenceId: regMap.commercialCourt.id,
+      createdAt: twoWeeksAgo,
+    },
+    // Client activities
+    {
+      userId: userMap.admin.id,
+      type: "client" as const,
+      action: "created" as const,
+      title: "New client added: AlRajhi Holding",
+      referenceId: clientMap.alRajhi.id,
+      createdAt: oneWeekAgo,
+    },
+    {
+      userId: userMap.seniorLawyer.id,
+      type: "client" as const,
+      action: "updated" as const,
+      title: "Updated client info: Nasser Al-Dosari",
+      referenceId: clientMap.alDosari.id,
+      createdAt: threeMonthsAgo,
+    },
+    // Recent activities for today
+    {
+      userId: userMap.seniorLawyer.id,
+      type: "case" as const,
+      action: "updated" as const,
+      title: "Added notes to case: Al-Amoudi vs TechSolutions",
+      referenceId: caseMap.amoudi.id,
+      createdAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.admin.id,
+      type: "document" as const,
+      action: "uploaded" as const,
+      title: "Uploaded: Settlement Agreement (Al-Fahman)",
+      referenceId: insertedDocs[3].id,
+      createdAt: new Date(now.getTime() - 5 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.lawyer.id,
+      type: "regulation" as const,
+      action: "reviewed" as const,
+      title: "Reviewed: Construction Contract Regulations",
+      referenceId: regMap.constructionContract.id,
+      createdAt: new Date(now.getTime() - 8 * 60 * 60 * 1000),
+    },
+    {
+      userId: userMap.paralegal.id,
+      type: "case" as const,
+      action: "updated" as const,
+      title: "Prepared case documents: Al-Dosari Employment",
+      referenceId: caseMap.dosari.id,
+      createdAt: new Date(now.getTime() - 12 * 60 * 60 * 1000),
+    },
+  ];
+
+  const insertedActivities = await db.insert(userActivities).values(activitiesData).returning();
+  console.log(`   ✓ Created ${insertedActivities.length} user activities`);
+
+  // ==========================================
+  // 10. USER ACHIEVEMENTS
+  // ==========================================
+  console.log("🏆 Seeding user achievements...");
+
+  const achievementsData = [
+    {
+      userId: userMap.admin.id,
+      title: "Top Performer",
+      description: "Awarded for achieving highest case closure rate in Q4 2024",
+      icon: "award",
+      awardedAt: new Date("2024-12-15"),
+    },
+    {
+      userId: userMap.seniorLawyer.id,
+      title: "Labor Law Expert",
+      description: "Successfully resolved 50+ labor disputes",
+      icon: "star",
+      awardedAt: new Date("2024-11-20"),
+    },
+    {
+      userId: userMap.lawyer.id,
+      title: "Rising Star",
+      description: "Recognized for outstanding performance in first year",
+      icon: "trending-up",
+      awardedAt: new Date("2024-10-10"),
+    },
+    {
+      userId: userMap.seniorLawyer.id,
+      title: "Client Champion",
+      description: "Highest client satisfaction rating for 2024",
+      icon: "heart",
+      awardedAt: new Date("2024-12-01"),
+    },
+  ];
+
+  const insertedAchievements = await db.insert(userAchievements).values(achievementsData).returning();
+  console.log(`   ✓ Created ${insertedAchievements.length} user achievements`);
+
+  // ==========================================
+  // 11. NOTIFICATIONS
   // ==========================================
   console.log("🔔 Seeding notifications...");
   const notificationsData = [
@@ -519,7 +857,7 @@ async function main() {
       organizationId: orgId,
       type: "regulation_update" as const,
       title: "New Amendment to Labor Law",
-      message: "Article 77 has been revised regarding compensation calculation for arbitrary dismissal.",
+      message: "Article 77 has been revised regarding compensation calculation.",
       relatedRegulationId: regMap.laborArt77.id,
       read: false,
     },
@@ -528,7 +866,7 @@ async function main() {
       organizationId: orgId,
       type: "ai_suggestion" as const,
       title: "New Regulation Match Found",
-      message: "AI discovered a relevant regulation for case C-2024-001.",
+      message: "AI discovered a relevant regulation for case C-2025-001.",
       relatedCaseId: caseMap.amoudi.id,
       relatedRegulationId: regMap.laborArt77.id,
       read: false,
@@ -538,7 +876,7 @@ async function main() {
       organizationId: orgId,
       type: "case_update" as const,
       title: "Hearing Scheduled",
-      message: "Next hearing for Al-Amoudi case scheduled for Jan 20, 2025.",
+      message: "Next hearing for Al-Amoudi case scheduled for next week.",
       relatedCaseId: caseMap.amoudi.id,
       read: true,
     },
@@ -555,7 +893,7 @@ async function main() {
       organizationId: orgId,
       type: "case_update" as const,
       title: "New Document Added",
-      message: "Construction contract uploaded to case C-2024-003.",
+      message: "Construction contract uploaded to case C-2024-043.",
       relatedCaseId: caseMap.construction.id,
       read: true,
     },
@@ -580,6 +918,8 @@ async function main() {
   console.log(`│ Regulation Versions    │     ${insertedVersions.length} │`);
   console.log(`│ Case-Regulation Links  │     ${insertedLinks.length} │`);
   console.log(`│ Documents              │     ${insertedDocs.length} │`);
+  console.log(`│ User Activities        │     ${insertedActivities.length} │`);
+  console.log(`│ User Achievements      │     ${insertedAchievements.length} │`);
   console.log(`│ Notifications          │     ${insertedNotifications.length} │`);
   console.log("└──────────────────────────────┘");
   console.log("\n📧 Test Login Credentials:");
