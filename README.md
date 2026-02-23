@@ -2,6 +2,11 @@
 
 A simple backend API for managing legal cases and regulations. Built with Fastify (TypeScript), PostgreSQL, and Drizzle ORM. It includes JWT authentication and optional AI-assisted links between cases and regulations.
 
+### Brief Outcome (Regulation Upgrade)
+- Added MOJ source sync endpoints and worker-integrated ingestion cycle.
+- Added regulation version compare API for frontend side-by-side diff rendering.
+- Upgraded regulations list sorting to latest-updated and included version counts in list payloads.
+
 ### Features
 - Authentication (JWT)
 - Case CRUD
@@ -10,6 +15,8 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 - Regulation subscription APIs (single + bulk subscribe)
 - Dedicated regulation monitoring worker runtime
 - Hash-based regulation versioning with automatic notification fanout
+- MOJ regulation source sync service (latest regulations ingestion from laws.moj.gov.sa)
+- Regulation version compare API for side-by-side UI diffing
 - Monitor observability endpoints (health + recent run stats)
 - Async case-document extraction queue with OCR-backed text extraction
 - Case-focused document insights lifecycle (summary + highlights) with worker processing
@@ -54,6 +61,10 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `REG_MONITOR_POLL_SECONDS`: worker polling interval
 - `REG_MONITOR_MAX_CONCURRENCY`: concurrent source checks per cycle
 - `REG_MONITOR_FAILURE_RETRY_MINUTES`: retry delay for failed checks
+- `REG_SOURCE_SYNC_ENABLED`: enable/disable MOJ regulation source sync cycle
+- `REG_SOURCE_SYNC_INTERVAL_MINUTES`: cadence for MOJ source sync cycle
+- `REG_SOURCE_MOJ_LISTING_URL`: MOJ listing URL seed for crawling
+- `REG_SOURCE_MOJ_MAX_PAGES`: max listing pages to scan per sync run
 - `CASE_DOC_EXTRACTION_*`: document extraction queue controls
 - `CASE_DOC_INSIGHTS_*`: document insights queue controls
 - `CASE_LINK_DOC_*`: limits for document context used in AI case linking
@@ -71,6 +82,9 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `POST /api/regulations/monitor/run` — manual monitor run trigger (admin)
 - `GET /api/regulations/monitor/health` — monitor health summary (admin)
 - `GET /api/regulations/monitor/stats` — recent monitor run stats (admin)
+- `POST /api/regulations/source/moj/sync` — trigger MOJ source sync (admin)
+- `GET /api/regulations/source/moj/health` — MOJ sync health + coverage summary (admin)
+- `GET /api/regulations/:id/compare?fromVersion=&toVersion=` — compare two regulation versions
 - `POST /api/ai-links/:caseId/generate` — AI suggestions (protected)
 - `GET /api/ai-links/:caseId` — list links (protected)
 - `GET /api/documents/:id/insights` — case-focused summary/highlights for a document (protected)

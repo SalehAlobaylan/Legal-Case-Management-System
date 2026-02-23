@@ -21,6 +21,7 @@ import {
 } from "fastify";
 import { eq } from "drizzle-orm";
 import {
+  compareRegulationVersionsHandler,
   createRegulationHandler,
   getRegulationByIdHandler,
   getRegulationVersionsHandler,
@@ -32,6 +33,7 @@ import type { Database } from "../../db/connection";
 import { CaseService } from "../../services/case.service";
 import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
 import { RegulationMonitorService } from "../../services/regulation-monitor.service";
+import { RegulationSourceService } from "../../services/regulation-source.service";
 
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
@@ -391,6 +393,93 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
       const runs = await monitorService.getRecentRuns(limit);
       return reply.send({ runs });
     }
+  );
+
+  // POST /api/regulations/source/moj/sync
+  // - Trigger MOJ source synchronization and optional extraction/versioning.
+  app.post(
+    "/source/moj/sync",
+    {
+      schema: {
+        description: "Run MOJ regulation source sync",
+        tags: ["regulations"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          properties: {
+            maxPages: { type: "number" },
+            extractContent: { type: "boolean" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, body } = request as RequestWithUser & {
+        body: {
+          maxPages?: number;
+          extractContent?: boolean;
+        };
+      };
+      if (user.role !== "admin") {
+        return reply.status(403).send({ message: "Admin access required" });
+      }
+
+      const sourceService = new RegulationSourceService(app.db);
+      const result = await sourceService.syncMojSource({
+        maxPages:
+          typeof body?.maxPages === "number" ? Math.max(1, body.maxPages) : undefined,
+        extractContent:
+          typeof body?.extractContent === "boolean" ? body.extractContent : true,
+        triggeredByUserId: user.id,
+        triggerSource: "moj_source_sync",
+      });
+      return reply.send({ result });
+    }
+  );
+
+  // GET /api/regulations/source/moj/health
+  // - Operational health and coverage summary for MOJ sync.
+  app.get(
+    "/source/moj/health",
+    {
+      schema: {
+        description: "Get MOJ source sync health summary",
+        tags: ["regulations"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      if (user.role !== "admin") {
+        return reply.status(403).send({ message: "Admin access required" });
+      }
+
+      const sourceService = new RegulationSourceService(app.db);
+      const health = await sourceService.getMojHealthSummary();
+      return reply.send({ health });
+    }
+  );
+
+  // GET /api/regulations/:id/compare
+  // - Compare two regulation versions and return diff blocks.
+  app.get(
+    "/:id/compare",
+    {
+      schema: {
+        description: "Compare regulation versions",
+        tags: ["regulations"],
+        security: [{ bearerAuth: [] }],
+        querystring: {
+          type: "object",
+          required: ["fromVersion", "toVersion"],
+          properties: {
+            fromVersion: { type: "string" },
+            toVersion: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    compareRegulationVersionsHandler as any
   );
 
   // GET /api/regulations/:id

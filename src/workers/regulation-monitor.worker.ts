@@ -3,6 +3,7 @@ import { env } from "../config/env";
 import { logger } from "../utils/logger";
 import { RegulationMonitorService } from "../services/regulation-monitor.service";
 import { DocumentExtractionService } from "../services/document-extraction.service";
+import { RegulationSourceService } from "../services/regulation-source.service";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,12 +16,17 @@ async function main() {
   }
 
   const monitorService = new RegulationMonitorService(db);
+  const sourceService = new RegulationSourceService(db);
   const documentExtractionService = new DocumentExtractionService(db);
+  let lastSourceSyncAt = 0;
   logger.info(
     {
       pollSeconds: env.REG_MONITOR_POLL_SECONDS,
       concurrency: env.REG_MONITOR_MAX_CONCURRENCY,
       failureRetryMinutes: env.REG_MONITOR_FAILURE_RETRY_MINUTES,
+      sourceSyncEnabled: env.REG_SOURCE_SYNC_ENABLED,
+      sourceSyncIntervalMinutes: env.REG_SOURCE_SYNC_INTERVAL_MINUTES,
+      sourceMaxPages: env.REG_SOURCE_MOJ_MAX_PAGES,
       docExtractionEnabled: env.CASE_DOC_EXTRACTION_ENABLED,
       docExtractionBatchSize: env.CASE_DOC_EXTRACTION_BATCH_SIZE,
       docExtractionConcurrency: env.CASE_DOC_EXTRACTION_MAX_CONCURRENCY,
@@ -34,6 +40,20 @@ async function main() {
   while (running) {
     const startedAt = Date.now();
     try {
+      if (env.REG_SOURCE_SYNC_ENABLED) {
+        const intervalMs = env.REG_SOURCE_SYNC_INTERVAL_MINUTES * 60 * 1000;
+        const shouldSync = Date.now() - lastSourceSyncAt >= intervalMs;
+        if (shouldSync) {
+          const syncResult = await sourceService.syncMojSource({
+            maxPages: env.REG_SOURCE_MOJ_MAX_PAGES,
+            extractContent: true,
+            triggerSource: "moj_source_sync",
+          });
+          lastSourceSyncAt = Date.now();
+          logger.info(syncResult, "MOJ regulation source sync cycle completed");
+        }
+      }
+
       await monitorService.runDueSubscriptions({
         triggerSource: "worker",
       });

@@ -153,3 +153,40 @@ export async function getRegulationVersionsHandler(
   return reply.send({ versions: normalizedVersions });
 }
 
+/*
+ * compareRegulationVersionsHandler
+ *
+ * - Parses the regulation id and the two version numbers to compare.
+ * - Delegates line-based diff computation to `RegulationService.compareRegulationVersions`.
+ */
+export async function compareRegulationVersionsHandler(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const { params, query, server } = request as RequestWithUserAndDb & {
+    params: { id: string };
+    query: { fromVersion?: string; toVersion?: string };
+  };
+
+  const regulationId = Number.parseInt(params.id, 10);
+  const fromVersion = Number.parseInt(query.fromVersion || "", 10);
+  const toVersion = Number.parseInt(query.toVersion || "", 10);
+
+  if (!Number.isInteger(regulationId) || regulationId <= 0) {
+    return reply.status(400).send({ message: "Invalid regulation id parameter" });
+  }
+  if (!Number.isInteger(fromVersion) || !Number.isInteger(toVersion)) {
+    return reply
+      .status(400)
+      .send({ message: "fromVersion and toVersion query params are required" });
+  }
+
+  const regulationService = new RegulationService(server.db);
+  const comparison = await regulationService.compareRegulationVersions(
+    regulationId,
+    fromVersion,
+    toVersion
+  );
+
+  return reply.send({ comparison });
+}

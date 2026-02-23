@@ -25,6 +25,15 @@ const envSchema = z.object({
   REG_MONITOR_POLL_SECONDS: z.coerce.number().int().min(5).default(60),
   REG_MONITOR_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(5),
   REG_MONITOR_FAILURE_RETRY_MINUTES: z.coerce.number().int().min(1).default(30),
+  REG_SOURCE_SYNC_ENABLED: z.coerce.boolean().default(true),
+  REG_SOURCE_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(5).default(360),
+  REG_SOURCE_MOJ_LISTING_URL: z
+    .string()
+    .url()
+    .default(
+      "https://laws.moj.gov.sa/ar/legislations-regulations?pageNumber=1&pageSize=9&sortingBy=7"
+    ),
+  REG_SOURCE_MOJ_MAX_PAGES: z.coerce.number().int().min(1).max(100).default(5),
   CASE_DOC_EXTRACTION_ENABLED: z.coerce.boolean().default(true),
   CASE_DOC_EXTRACTION_BATCH_SIZE: z.coerce.number().int().min(1).max(200).default(20),
   CASE_DOC_EXTRACTION_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(3),
