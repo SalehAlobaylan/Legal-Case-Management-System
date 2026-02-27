@@ -44,6 +44,10 @@ export const documentExtractions = pgTable(
     insightsHighlightsJson: text("insights_highlights_json")
       .default("[]")
       .notNull(),
+    insightsCitationsJson: text("insights_citations_json")
+      .default("[]")
+      .notNull(),
+    insightsRetrievalMetaJson: text("insights_retrieval_meta_json"),
     insightsCaseContextHash: varchar("insights_case_context_hash", { length: 64 }),
     insightsSourceTextHash: varchar("insights_source_text_hash", { length: 64 }),
     insightsMethod: varchar("insights_method", { length: 100 }),

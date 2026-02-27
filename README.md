@@ -11,6 +11,7 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 - Authentication (JWT)
 - Case CRUD
 - Regulation management
+- RAG Phase 1 document chunk storage with pgvector
 - AI-powered case–regulation linking
 - Regulation subscription APIs (single + bulk subscribe)
 - Dedicated regulation monitoring worker runtime
@@ -68,6 +69,7 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `CASE_DOC_EXTRACTION_*`: document extraction queue controls
 - `CASE_DOC_INSIGHTS_*`: document insights queue controls
 - `CASE_LINK_DOC_*`: limits for document context used in AI case linking
+- PostgreSQL `vector` extension is required for `document_chunks` migrations (`CREATE EXTENSION IF NOT EXISTS vector;`)
 
 ### API overview (brief)
 - `GET /health` — health check
@@ -90,6 +92,8 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `GET /api/documents/:id/insights` — case-focused summary/highlights for a document (protected)
 - `POST /api/documents/:id/insights/refresh` — queue insights regeneration (protected)
 - `GET /api/documents/insights/health` — org-scoped insights queue health snapshot (protected)
+  - backwards-compatible payload keeps `summary` + `highlights`
+  - optional RAG metadata: `citations`, `retrievalMeta`
 
 ### Organization & Membership Flows (New)
 - Personal-first onboarding:
@@ -118,6 +122,13 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
   - stores invitation email, role, status, expiry, issuer, accepter, and hashed code
   - unique pending invitation per `(organization_id, email)`
   - single-use hashed invitation codes
+- new `document_chunks` table:
+  - stores org-scoped document chunks, embeddings, and chunk metadata
+  - unique chunk position per document via `(document_id, chunk_index)`
+  - cosine ANN index using pgvector HNSW (`vector_cosine_ops`)
+- `document_extractions` additions for RAG insight metadata:
+  - `insights_citations_json`
+  - `insights_retrieval_meta_json`
 
 ### Registration Payloads
 - Personal (default):
@@ -151,4 +162,5 @@ npm run test:coverage # Generate coverage report
 ```
 
 Tests use Jest with `ts-jest` and run against a test database. Set `DATABASE_URL` for test environment.
+
 

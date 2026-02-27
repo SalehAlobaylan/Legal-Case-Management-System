@@ -103,12 +103,13 @@ const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const ext = path.extname(data.filename);
       const uniqueName = `${randomUUID()}${ext}`;
-      const filePath = path.join(UPLOAD_DIR, uniqueName);
+      const filePath = path.resolve(UPLOAD_DIR, uniqueName);
       const writeStream = fs.createWriteStream(filePath);
 
       await new Promise<void>((resolve, reject) => {
         data.file.pipe(writeStream);
-        data.file.on("end", resolve);
+        writeStream.on("finish", resolve);
+        writeStream.on("error", reject);
         data.file.on("error", reject);
       });
 

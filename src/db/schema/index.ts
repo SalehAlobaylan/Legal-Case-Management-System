@@ -8,6 +8,7 @@ export * from "./regulation-subscriptions";
 export * from "./regulation-monitor-runs";
 export * from "./case-regulation-links";
 export * from "./documents";
+export * from "./document-chunks";
 export * from "./document-extractions";
 export * from "./clients";
 export * from "./notifications";
