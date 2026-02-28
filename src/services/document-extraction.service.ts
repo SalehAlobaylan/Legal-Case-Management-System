@@ -1,10 +1,16 @@
 import { createHash } from "crypto";
 import * as fs from "fs";
 import { promises as fsPromises } from "fs";
+import * as path from "path";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import { env } from "../config/env";
 import { AIClientService, type SimilarityCaseFragment } from "./ai-client.service";
+import {
+  DocumentRagService,
+  type DocumentInsightCitation,
+  type DocumentInsightRetrievalMeta,
+} from "./document-rag.service";
 import {
   cases,
   documentExtractions,
@@ -39,6 +45,8 @@ export interface DocumentInsightState {
   status: DocumentInsightsStatus;
   summary: string | null;
   highlights: DocumentInsightHighlight[];
+  citations?: DocumentInsightCitation[];
+  retrievalMeta?: DocumentInsightRetrievalMeta | null;
   method: string | null;
   errorCode: string | null;
   warnings: string[];
@@ -77,6 +85,7 @@ interface CaseContextRecord {
 
 export class DocumentExtractionService {
   private aiClient?: AIClientService;
+  private ragService?: DocumentRagService;
 
   constructor(private readonly db: Database) {}
 
@@ -87,8 +96,41 @@ export class DocumentExtractionService {
     return this.aiClient;
   }
 
+  private getRAGService(): DocumentRagService {
+    if (!this.ragService) {
+      this.ragService = new DocumentRagService(
+        this.db,
+        this.getAIClient()
+      );
+    }
+    return this.ragService;
+  }
+
   private hashBuffer(buffer: Buffer): string {
     return createHash("sha256").update(buffer).digest("hex");
+  }
+
+  private resolveDocumentPath(filePath: string): string | null {
+    if (!filePath) {
+      return null;
+    }
+
+    if (path.isAbsolute(filePath)) {
+      return fs.existsSync(filePath) ? filePath : null;
+    }
+
+    const candidates = [
+      path.resolve(process.cwd(), filePath),
+      path.resolve(__dirname, "..", "..", filePath),
+    ];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
   }
 
   private getRetryAt(base: Date): Date {
@@ -170,6 +212,117 @@ export class DocumentExtractionService {
     }
   }
 
+  private parseCitations(
+    citationsJson?: string | null
+  ): DocumentInsightCitation[] {
+    if (!citationsJson) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(citationsJson);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed
+        .map((item) => {
+          if (!item || typeof item !== "object") {
+            return null;
+          }
+
+          const source = item as Record<string, unknown>;
+          const chunkId = Number(
+            source.chunkId ?? source.chunk_id ?? source.id ?? 0
+          );
+          const chunkIndex = Number(
+            source.chunkIndex ?? source.chunk_index ?? -1
+          );
+          const similarity = Number(source.similarity ?? source.score ?? 0);
+          const snippet =
+            typeof source.snippet === "string"
+              ? source.snippet
+              : typeof source.content === "string"
+                ? source.content
+                : "";
+
+          if (!snippet || !Number.isFinite(chunkIndex) || chunkIndex < 0) {
+            return null;
+          }
+
+          const metadata =
+            source.metadata && typeof source.metadata === "object"
+              ? (source.metadata as Record<string, unknown>)
+              : {};
+
+          return {
+            chunkId: Number.isFinite(chunkId) ? chunkId : 0,
+            chunkIndex,
+            similarity: Number.isFinite(similarity) ? similarity : 0,
+            snippet,
+            contentLang:
+              typeof source.contentLang === "string"
+                ? source.contentLang
+                : typeof source.content_lang === "string"
+                  ? source.content_lang
+                  : null,
+            tokenCount: Number.isFinite(Number(source.tokenCount))
+              ? Number(source.tokenCount)
+              : Number.isFinite(Number(source.token_count))
+                ? Number(source.token_count)
+                : null,
+            metadata,
+          } satisfies DocumentInsightCitation;
+        })
+        .filter((item): item is DocumentInsightCitation => Boolean(item));
+    } catch {
+      return [];
+    }
+  }
+
+  private parseRetrievalMeta(
+    retrievalMetaJson?: string | null
+  ): DocumentInsightRetrievalMeta | null {
+    if (!retrievalMetaJson) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(retrievalMetaJson);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+
+      const source = parsed as Record<string, unknown>;
+      return {
+        strategy:
+          typeof source.strategy === "string"
+            ? source.strategy
+            : "pgvector_cosine_document_scope_v1",
+        topKRequested: Number.isFinite(Number(source.topKRequested))
+          ? Number(source.topKRequested)
+          : 0,
+        topKReturned: Number.isFinite(Number(source.topKReturned))
+          ? Number(source.topKReturned)
+          : 0,
+        queryChars: Number.isFinite(Number(source.queryChars))
+          ? Number(source.queryChars)
+          : 0,
+        contextChars: Number.isFinite(Number(source.contextChars))
+          ? Number(source.contextChars)
+          : 0,
+        embeddingDimension: Number.isFinite(Number(source.embeddingDimension))
+          ? Number(source.embeddingDimension)
+          : null,
+        warnings: Array.isArray(source.warnings)
+          ? source.warnings.filter(
+              (warning): warning is string => typeof warning === "string"
+            )
+          : [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private buildCaseContextText(caseRecord: CaseContextRecord): string {
     return `${caseRecord.title}\n\n${caseRecord.description || ""}`.trim();
   }
@@ -219,8 +372,9 @@ export class DocumentExtractionService {
     orgId: number
   ): Promise<{ queued: boolean }> {
     let fileHash: string | null = null;
-    if (fs.existsSync(document.filePath)) {
-      const fileBuffer = await fsPromises.readFile(document.filePath);
+    const resolvedFilePath = this.resolveDocumentPath(document.filePath);
+    if (resolvedFilePath) {
+      const fileBuffer = await fsPromises.readFile(resolvedFilePath);
       fileHash = this.hashBuffer(fileBuffer);
     }
 
@@ -233,7 +387,12 @@ export class DocumentExtractionService {
       },
     });
 
-    if (existing && existing.fileHash && existing.fileHash === fileHash) {
+    if (
+      existing &&
+      existing.fileHash &&
+      existing.fileHash === fileHash &&
+      existing.status === "ready"
+    ) {
       return { queued: false };
     }
 
@@ -257,6 +416,8 @@ export class DocumentExtractionService {
         insightsStatus: "pending",
         insightsSummary: null,
         insightsHighlightsJson: JSON.stringify([]),
+        insightsCitationsJson: JSON.stringify([]),
+        insightsRetrievalMetaJson: null,
         insightsCaseContextHash: null,
         insightsSourceTextHash: null,
         insightsMethod: null,
@@ -286,6 +447,8 @@ export class DocumentExtractionService {
           insightsStatus: "pending",
           insightsSummary: null,
           insightsHighlightsJson: JSON.stringify([]),
+          insightsCitationsJson: JSON.stringify([]),
+          insightsRetrievalMetaJson: null,
           insightsCaseContextHash: null,
           insightsSourceTextHash: null,
           insightsMethod: null,
@@ -461,6 +624,8 @@ export class DocumentExtractionService {
         insightsStatus: true,
         insightsSummary: true,
         insightsHighlightsJson: true,
+        insightsCitationsJson: true,
+        insightsRetrievalMetaJson: true,
         insightsMethod: true,
         insightsErrorCode: true,
         insightsWarningsJson: true,
@@ -473,6 +638,8 @@ export class DocumentExtractionService {
         status: "pending",
         summary: null,
         highlights: [],
+        citations: [],
+        retrievalMeta: null,
         method: null,
         errorCode: null,
         warnings: [],
@@ -484,6 +651,8 @@ export class DocumentExtractionService {
       status: row.insightsStatus as DocumentInsightsStatus,
       summary: row.insightsSummary,
       highlights: this.parseHighlights(row.insightsHighlightsJson),
+      citations: this.parseCitations(row.insightsCitationsJson),
+      retrievalMeta: this.parseRetrievalMeta(row.insightsRetrievalMetaJson),
       method: row.insightsMethod,
       errorCode: row.insightsErrorCode,
       warnings: this.parseWarnings(row.insightsWarningsJson),
@@ -530,12 +699,22 @@ export class DocumentExtractionService {
       orgId
     );
 
+    const extractionState = await this.getExtractionStatusByDocumentId(
+      documentId,
+      orgId
+    );
+    if (extractionState.status !== "ready") {
+      return;
+    }
+
     await this.db
       .update(documentExtractions)
       .set({
         insightsStatus: "pending",
         insightsSummary: null,
         insightsHighlightsJson: JSON.stringify([]),
+        insightsCitationsJson: JSON.stringify([]),
+        insightsRetrievalMetaJson: null,
         insightsMethod: null,
         insightsErrorCode: null,
         insightsWarningsJson: null,
@@ -712,7 +891,11 @@ export class DocumentExtractionService {
       },
     });
 
-    if (!document || !fs.existsSync(document.filePath)) {
+    const resolvedFilePath = document
+      ? this.resolveDocumentPath(document.filePath)
+      : null;
+
+    if (!document || !resolvedFilePath) {
       await this.db
         .update(documentExtractions)
         .set({
@@ -722,6 +905,8 @@ export class DocumentExtractionService {
           insightsStatus: "failed",
           insightsErrorCode: "file_missing",
           insightsWarningsJson: JSON.stringify(["Document file is missing on disk."]),
+          insightsCitationsJson: JSON.stringify([]),
+          insightsRetrievalMetaJson: null,
           insightsNextRetryAt: this.getInsightsRetryAt(now),
           insightsUpdatedAt: now,
           lastAttemptAt: now,
@@ -744,7 +929,7 @@ export class DocumentExtractionService {
       .where(eq(documentExtractions.id, row.id));
 
     try {
-      const content = await fsPromises.readFile(document.filePath);
+      const content = await fsPromises.readFile(resolvedFilePath);
       const fileHash = this.hashBuffer(content);
       const extraction = await this.getAIClient().extractDocumentContent({
         content,
@@ -754,20 +939,45 @@ export class DocumentExtractionService {
       });
 
       if (extraction.status === "ok") {
+        const extractionWarnings = extraction.warnings || [];
+        const extractedText = (extraction.extracted_text || "").trim();
+        const ragWarnings: string[] = [];
+
+        try {
+          const chunkReindex = await this.getRAGService().reindexDocumentChunks({
+            organizationId: row.organizationId,
+            documentId: row.documentId,
+            sourceText: extractedText,
+          });
+          ragWarnings.push(...chunkReindex.warnings);
+        } catch (error) {
+          logger.error(
+            {
+              err: error,
+              extractionId: row.id,
+              documentId: row.documentId,
+            },
+            "Document chunk indexing failed during extraction"
+          );
+          ragWarnings.push("document_chunk_indexing_failed");
+        }
+
         await this.db
           .update(documentExtractions)
           .set({
             status: "ready",
             fileHash,
-            extractedText: extraction.extracted_text || null,
+            extractedText: extractedText || null,
             normalizedTextHash: extraction.normalized_text_hash || null,
             extractionMethod: extraction.extraction_method,
             ocrProviderUsed: extraction.ocr_provider_used || null,
             errorCode: extraction.error_code || null,
-            warningsJson: JSON.stringify(extraction.warnings || []),
+            warningsJson: JSON.stringify([...extractionWarnings, ...ragWarnings]),
             insightsStatus: "pending",
             insightsSummary: null,
             insightsHighlightsJson: JSON.stringify([]),
+            insightsCitationsJson: JSON.stringify([]),
+            insightsRetrievalMetaJson: null,
             insightsCaseContextHash: null,
             insightsSourceTextHash: null,
             insightsMethod: null,
@@ -799,6 +1009,8 @@ export class DocumentExtractionService {
           insightsStatus: unsupported ? "unsupported" : "failed",
           insightsSummary: null,
           insightsHighlightsJson: JSON.stringify([]),
+          insightsCitationsJson: JSON.stringify([]),
+          insightsRetrievalMetaJson: null,
           insightsCaseContextHash: null,
           insightsSourceTextHash: null,
           insightsMethod: extraction.extraction_method || null,
@@ -835,6 +1047,8 @@ export class DocumentExtractionService {
           insightsWarningsJson: JSON.stringify([
             error instanceof Error ? error.message : "Unknown extraction error",
           ]),
+          insightsCitationsJson: JSON.stringify([]),
+          insightsRetrievalMetaJson: null,
           insightsNextRetryAt: this.getInsightsRetryAt(now),
           insightsUpdatedAt: now,
           nextRetryAt: this.getRetryAt(now),
@@ -921,6 +1135,8 @@ export class DocumentExtractionService {
           insightsStatus: "failed",
           insightsErrorCode: "case_missing",
           insightsWarningsJson: JSON.stringify(["Case record is missing."]),
+          insightsCitationsJson: JSON.stringify([]),
+          insightsRetrievalMetaJson: null,
           insightsNextRetryAt: this.getInsightsRetryAt(now),
           insightsUpdatedAt: now,
           updatedAt: now,
@@ -939,6 +1155,8 @@ export class DocumentExtractionService {
           insightsWarningsJson: JSON.stringify([
             "Document extraction text is missing.",
           ]),
+          insightsCitationsJson: JSON.stringify([]),
+          insightsRetrievalMetaJson: null,
           insightsNextRetryAt: this.getInsightsRetryAt(now),
           insightsUpdatedAt: now,
           updatedAt: now,
@@ -951,6 +1169,13 @@ export class DocumentExtractionService {
     const caseContextHash = this.hashText(caseText);
     const sourceTextHash =
       row.normalizedTextHash || this.hashText(sourceText.toLowerCase());
+    const fallbackSourceText = sourceText.slice(
+      0,
+      env.CASE_DOC_INSIGHTS_MAX_SOURCE_CHARS
+    );
+    let ragSourceText = fallbackSourceText;
+    let citations: DocumentInsightCitation[] = [];
+    let retrievalMeta: DocumentInsightRetrievalMeta | null = null;
 
     await this.db
       .update(documentExtractions)
@@ -958,17 +1183,65 @@ export class DocumentExtractionService {
         insightsStatus: "processing",
         insightsLastAttemptAt: now,
         insightsAttemptCount: (row.insightsAttemptCount || 0) + 1,
+        insightsCitationsJson: JSON.stringify([]),
+        insightsRetrievalMetaJson: null,
         insightsUpdatedAt: now,
         updatedAt: now,
       })
       .where(eq(documentExtractions.id, row.id));
 
     try {
+      try {
+        const retrieval = await this.getRAGService().retrieveRelevantChunks({
+          organizationId: row.organizationId,
+          documentId: row.documentId,
+          queryText: caseText,
+          topK: env.CASE_DOC_INSIGHTS_TOP_K,
+        });
+        citations = retrieval.citations;
+        retrievalMeta = retrieval.retrievalMeta;
+        if (retrieval.contextText.trim()) {
+          ragSourceText = retrieval.contextText.slice(
+            0,
+            env.CASE_DOC_INSIGHTS_MAX_SOURCE_CHARS
+          );
+        }
+      } catch (retrievalError) {
+        logger.error(
+          {
+            err: retrievalError,
+            extractionId: row.id,
+            documentId: row.documentId,
+          },
+          "Document chunk retrieval failed for insights"
+        );
+        retrievalMeta = {
+          strategy: "pgvector_cosine_document_scope_v1",
+          topKRequested: env.CASE_DOC_INSIGHTS_TOP_K,
+          topKReturned: 0,
+          queryChars: caseText.length,
+          contextChars: 0,
+          embeddingDimension: null,
+          warnings: [
+            retrievalError instanceof Error
+              ? retrievalError.message
+              : "chunk_retrieval_failed",
+          ],
+        };
+      }
+
       const insights = await this.getAIClient().generateDocumentCaseInsights({
         caseText,
-        documentText: sourceText.slice(0, env.CASE_DOC_INSIGHTS_MAX_SOURCE_CHARS),
+        documentText: ragSourceText,
         topK: env.CASE_DOC_INSIGHTS_TOP_K,
       });
+
+      const combinedWarnings = [
+        ...(insights.warnings || []),
+        ...((retrievalMeta?.warnings || []).filter(
+          (warning) => warning !== "no_vector_chunks_returned"
+        ) || []),
+      ];
 
       if (insights.status === "ok") {
         await this.db
@@ -977,11 +1250,18 @@ export class DocumentExtractionService {
             insightsStatus: "ready",
             insightsSummary: insights.summary || null,
             insightsHighlightsJson: JSON.stringify(insights.highlights || []),
+            insightsCitationsJson: JSON.stringify(citations),
+            insightsRetrievalMetaJson: retrievalMeta
+              ? JSON.stringify(retrievalMeta)
+              : null,
             insightsCaseContextHash: caseContextHash,
             insightsSourceTextHash: sourceTextHash,
-            insightsMethod: insights.method || "embedding_extractive_v1",
+            insightsMethod:
+              citations.length > 0
+                ? "embedding_extractive_rag_pgvector_v1"
+                : insights.method || "embedding_extractive_v1",
             insightsErrorCode: null,
-            insightsWarningsJson: JSON.stringify(insights.warnings || []),
+            insightsWarningsJson: JSON.stringify(combinedWarnings),
             insightsNextRetryAt: now,
             insightsUpdatedAt: now,
             updatedAt: now,
@@ -996,11 +1276,18 @@ export class DocumentExtractionService {
           insightsStatus: "failed",
           insightsSummary: null,
           insightsHighlightsJson: JSON.stringify([]),
+          insightsCitationsJson: JSON.stringify(citations),
+          insightsRetrievalMetaJson: retrievalMeta
+            ? JSON.stringify(retrievalMeta)
+            : null,
           insightsCaseContextHash: caseContextHash,
           insightsSourceTextHash: sourceTextHash,
-          insightsMethod: insights.method || "embedding_extractive_v1",
+          insightsMethod:
+            citations.length > 0
+              ? "embedding_extractive_rag_pgvector_v1"
+              : insights.method || "embedding_extractive_v1",
           insightsErrorCode: insights.error_code || "insights_error",
-          insightsWarningsJson: JSON.stringify(insights.warnings || []),
+          insightsWarningsJson: JSON.stringify(combinedWarnings),
           insightsNextRetryAt: this.getInsightsRetryAt(now),
           insightsUpdatedAt: now,
           updatedAt: now,
@@ -1023,7 +1310,12 @@ export class DocumentExtractionService {
           insightsErrorCode: "insights_service_error",
           insightsWarningsJson: JSON.stringify([
             error instanceof Error ? error.message : "Unknown insights error",
+            ...((retrievalMeta?.warnings || []) as string[]),
           ]),
+          insightsCitationsJson: JSON.stringify(citations),
+          insightsRetrievalMetaJson: retrievalMeta
+            ? JSON.stringify(retrievalMeta)
+            : null,
           insightsNextRetryAt: this.getInsightsRetryAt(now),
           insightsUpdatedAt: now,
           updatedAt: now,

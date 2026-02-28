@@ -1,7 +1,9 @@
 import type { Config } from "drizzle-kit";
-import { env } from "./src/config/env";
+import dotenv from "dotenv";
 
-const DATABASE_URL = env.DATABASE_URL ?? process.env.DATABASE_URL;
+dotenv.config();
+
+const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
   throw new Error("DATABASE_URL is required for Drizzle configuration");
 }

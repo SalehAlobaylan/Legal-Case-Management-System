@@ -134,18 +134,18 @@ export class AIClientService {
   }
 
   /**
-   * generateEmbedding
+   * generateEmbeddings
    *
-   * - Generates a single embedding vector for the provided text.
+   * - Generates embedding vectors for a batch of texts.
    * - Delegates to the AI microservice `/embed/` endpoint.
    */
-  async generateEmbedding(text: string): Promise<number[]> {
+  async generateEmbeddings(texts: string[]): Promise<EmbeddingResponse> {
     try {
       const response = await fetch(`${this.baseUrl}/embed/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          texts: [text],
+          texts,
           normalize: true,
         }),
       });
@@ -158,16 +158,35 @@ export class AIClientService {
       }
 
       const data = (await response.json()) as EmbeddingResponse;
-
-      if (!data.embeddings?.length || !data.embeddings[0]) {
-        throw new Error("AI service returned an empty embeddings array");
+      if (!Array.isArray(data.embeddings)) {
+        throw new Error("AI service returned invalid embeddings payload");
       }
 
-      return data.embeddings[0];
+      if (data.embeddings.length !== texts.length) {
+        throw new Error(
+          `AI service returned ${data.embeddings.length} embeddings for ${texts.length} texts`
+        );
+      }
+
+      return data;
     } catch (error) {
-      logger.error({ err: error }, "Failed to generate embedding from AI service");
+      logger.error({ err: error }, "Failed to generate embeddings from AI service");
       throw error;
     }
+  }
+
+  /**
+   * generateEmbedding
+   *
+   * - Generates a single embedding vector for the provided text.
+   * - Delegates to the AI microservice `/embed/` endpoint.
+   */
+  async generateEmbedding(text: string): Promise<number[]> {
+    const data = await this.generateEmbeddings([text]);
+    if (!data.embeddings[0]) {
+      throw new Error("AI service returned an empty embeddings array");
+    }
+    return data.embeddings[0];
   }
 
   /**

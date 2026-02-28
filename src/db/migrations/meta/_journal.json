@@ -85,6 +85,20 @@
       "when": 1771766400000,
       "tag": "0011_org_membership_invitations",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1771939194603,
+      "tag": "0012_document_chunks_pgvector",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1771992000000,
+      "tag": "0013_document_insights_rag_metadata",
+      "breakpoints": true
     }
   ]
 }
