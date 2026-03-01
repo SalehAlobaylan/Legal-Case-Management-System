@@ -10,6 +10,7 @@ import { LinkService } from "../../services/link.service";
 import { CaseService } from "../../services/case.service";
 import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
+import { NotificationDeliveryService } from "../../services/notification-delivery.service";
 import type { Database } from "../../db/connection";
 
 type RequestWithUser<P> = FastifyRequest<{ Params: P }> & {
@@ -24,6 +25,11 @@ type RequestWithUser<P> = FastifyRequest<{ Params: P }> & {
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
   broadcastToOrg: (orgId: number, event: string, data: any) => void;
+  emitToUser?: (
+    userId: string,
+    event: string,
+    data: Record<string, unknown>
+  ) => void;
   db: Database;
 };
 
@@ -75,6 +81,10 @@ function serializeLinkForClient(
 
 const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
+  const notificationDelivery = new NotificationDeliveryService(
+    app.db,
+    app.emitToUser
+  );
 
   // All routes in this plugin require JWT authentication.
   app.addHook("onRequest", app.authenticate);
@@ -182,6 +192,17 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
           generationMeta: {
             ...documentContext.meta,
           },
+        });
+      }
+
+      if (serializedLinks.length > 0) {
+        await notificationDelivery.notifyOrganization({
+          organizationId: user.orgId,
+          type: "ai_suggestion",
+          category: "aiSuggestions",
+          title: `AI suggestions generated for Case ${case_.caseNumber}`,
+          message: `${serializedLinks.length} new regulation match${serializedLinks.length === 1 ? "" : "es"} found.`,
+          relatedCaseId: caseId,
         });
       }
 

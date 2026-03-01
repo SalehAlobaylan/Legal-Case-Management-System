@@ -33,6 +33,11 @@ type RequestWithUser = FastifyRequest & {
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
   db: Database;
+  emitToUser?: (
+    userId: string,
+    event: string,
+    data: Record<string, unknown>
+  ) => void;
 };
 
 // Zod schemas for validation
@@ -348,7 +353,7 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const data = sendMessageSchema.parse(body);
 
-      const messagingService = new ClientMessagingService(app.db);
+      const messagingService = new ClientMessagingService(app.db, app.emitToUser);
       const result = await messagingService.sendMessageToClient({
         clientId,
         message: data.message,

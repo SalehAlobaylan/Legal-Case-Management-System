@@ -99,6 +99,13 @@
       "when": 1771992000000,
       "tag": "0013_document_insights_rag_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1772307600000,
+      "tag": "0014_basic_notification_preferences",
+      "breakpoints": true
     }
   ]
 }

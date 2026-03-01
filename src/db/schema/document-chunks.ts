@@ -22,7 +22,7 @@ const vector = customType<{
   config: { dimensions: number };
 }>({
   dataType(config) {
-    return `vector(${config.dimensions})`;
+    return `vector(${config?.dimensions ?? DOCUMENT_CHUNK_EMBEDDING_DIMENSION})`;
   },
   toDriver(value) {
     return `[${value.join(",")}]`;

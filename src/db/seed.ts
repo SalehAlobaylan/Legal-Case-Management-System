@@ -8,6 +8,7 @@ import { regulationVersions } from "./schema/regulation-versions";
 import { caseRegulationLinks } from "./schema/case-regulation-links";
 import { documents } from "./schema/documents";
 import { notifications } from "./schema/notifications";
+import { notificationPreferences } from "./schema/notification-preferences";
 import { userActivities } from "./schema/user-activities";
 import { userAchievements } from "./schema/user-achievements";
 import { sql } from "drizzle-orm";
@@ -22,6 +23,7 @@ async function hashPassword(password: string): Promise<string> {
 
 async function clearDatabase() {
   console.log("🗑️  Clearing existing data...");
+  await db.delete(notificationPreferences);
   await db.delete(notifications);
   await db.delete(documents);
   await db.delete(caseRegulationLinks);
@@ -42,6 +44,7 @@ async function clearDatabase() {
   await db.execute(sql`ALTER SEQUENCE case_regulation_links_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE documents_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE notifications_id_seq RESTART WITH 1`);
+  await db.execute(sql`ALTER SEQUENCE notification_preferences_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE user_activities_id_seq RESTART WITH 1`);
   await db.execute(sql`ALTER SEQUENCE user_achievements_id_seq RESTART WITH 1`);
   console.log("   ✓ Database cleared\n");
@@ -193,6 +196,11 @@ async function main() {
     lawyer: insertedUsers.find((u) => u.role === "lawyer" && u.organizationId === orgId)!,
     paralegal: insertedUsers.find((u) => u.role === "paralegal" && u.organizationId === orgId)!,
     clerk: insertedUsers.find((u) => u.role === "clerk")!,
+  };
+  const testUserMap = {
+    admin: insertedUsers.find((u) => u.email === "admin@test.com")!,
+    lawyer: insertedUsers.find((u) => u.email === "lawyer@test.com")!,
+    paralegal: insertedUsers.find((u) => u.email === "sara@test.com")!,
   };
 
   // ==========================================
@@ -848,10 +856,142 @@ async function main() {
   console.log(`   ✓ Created ${insertedAchievements.length} user achievements`);
 
   // ==========================================
-  // 11. NOTIFICATIONS
+  // 11. NOTIFICATION PREFERENCES
+  // ==========================================
+  console.log("⚙️  Seeding notification preferences...");
+
+  const preferencesData = [
+    {
+      userId: userMap.admin.id,
+      emailAlerts: true,
+      pushNotifications: true,
+      aiSuggestions: true,
+      regulationUpdates: true,
+      caseUpdates: true,
+      systemAlerts: true,
+      quietHoursEnabled: false,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+      digestEnabled: false,
+      digestFrequency: "daily" as const,
+    },
+    {
+      userId: userMap.seniorLawyer.id,
+      emailAlerts: true,
+      pushNotifications: true,
+      aiSuggestions: true,
+      regulationUpdates: true,
+      caseUpdates: true,
+      systemAlerts: false,
+      quietHoursEnabled: true,
+      quietHoursStart: "23:00",
+      quietHoursEnd: "06:30",
+      digestEnabled: false,
+      digestFrequency: "daily" as const,
+    },
+    {
+      userId: userMap.lawyer.id,
+      emailAlerts: true,
+      pushNotifications: true,
+      aiSuggestions: false,
+      regulationUpdates: true,
+      caseUpdates: true,
+      systemAlerts: true,
+      quietHoursEnabled: false,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+      digestEnabled: true,
+      digestFrequency: "weekly" as const,
+    },
+    {
+      userId: userMap.paralegal.id,
+      emailAlerts: false,
+      pushNotifications: true,
+      aiSuggestions: true,
+      regulationUpdates: false,
+      caseUpdates: true,
+      systemAlerts: false,
+      quietHoursEnabled: false,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+      digestEnabled: false,
+      digestFrequency: "daily" as const,
+    },
+    {
+      userId: userMap.clerk.id,
+      emailAlerts: false,
+      pushNotifications: false,
+      aiSuggestions: false,
+      regulationUpdates: false,
+      caseUpdates: true,
+      systemAlerts: true,
+      quietHoursEnabled: true,
+      quietHoursStart: "21:30",
+      quietHoursEnd: "08:00",
+      digestEnabled: false,
+      digestFrequency: "daily" as const,
+    },
+    {
+      userId: testUserMap.admin.id,
+      emailAlerts: true,
+      pushNotifications: true,
+      aiSuggestions: true,
+      regulationUpdates: true,
+      caseUpdates: true,
+      systemAlerts: true,
+      quietHoursEnabled: false,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+      digestEnabled: false,
+      digestFrequency: "daily" as const,
+    },
+    {
+      userId: testUserMap.lawyer.id,
+      emailAlerts: true,
+      pushNotifications: true,
+      aiSuggestions: true,
+      regulationUpdates: true,
+      caseUpdates: true,
+      systemAlerts: true,
+      quietHoursEnabled: false,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+      digestEnabled: false,
+      digestFrequency: "daily" as const,
+    },
+    {
+      userId: testUserMap.paralegal.id,
+      emailAlerts: false,
+      pushNotifications: true,
+      aiSuggestions: false,
+      regulationUpdates: false,
+      caseUpdates: true,
+      systemAlerts: false,
+      quietHoursEnabled: true,
+      quietHoursStart: "23:30",
+      quietHoursEnd: "07:30",
+      digestEnabled: false,
+      digestFrequency: "weekly" as const,
+    },
+  ];
+
+  const insertedPreferences = await db
+    .insert(notificationPreferences)
+    .values(preferencesData)
+    .returning();
+  console.log(`   ✓ Created ${insertedPreferences.length} notification preference profiles`);
+
+  // ==========================================
+  // 12. NOTIFICATIONS
   // ==========================================
   console.log("🔔 Seeding notifications...");
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const threeDaysAgoNotif = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+  const oneWeekAgoDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const notificationsData = [
+    // Admin notifications
     {
       userId: userMap.admin.id,
       organizationId: orgId,
@@ -860,6 +1000,7 @@ async function main() {
       message: "Article 77 has been revised regarding compensation calculation.",
       relatedRegulationId: regMap.laborArt77.id,
       read: false,
+      createdAt: twoHoursAgo,
     },
     {
       userId: userMap.admin.id,
@@ -870,15 +1011,7 @@ async function main() {
       relatedCaseId: caseMap.amoudi.id,
       relatedRegulationId: regMap.laborArt77.id,
       read: false,
-    },
-    {
-      userId: userMap.seniorLawyer.id,
-      organizationId: orgId,
-      type: "case_update" as const,
-      title: "Hearing Scheduled",
-      message: "Next hearing for Al-Amoudi case scheduled for next week.",
-      relatedCaseId: caseMap.amoudi.id,
-      read: true,
+      createdAt: sixHoursAgo,
     },
     {
       userId: userMap.admin.id,
@@ -887,7 +1020,44 @@ async function main() {
       title: "MoJ System Maintenance",
       message: "Scheduled for Friday 2:00 AM. Some services may be unavailable.",
       read: false,
+      createdAt: oneDayAgo,
     },
+    {
+      userId: userMap.admin.id,
+      organizationId: orgId,
+      type: "case_update" as const,
+      title: "Case status changed",
+      message: "Case C-2025-001 moved to pending hearing.",
+      relatedCaseId: caseMap.amoudi.id,
+      read: true,
+      readAt: oneDayAgo,
+      createdAt: threeDaysAgoNotif,
+    },
+
+    // Senior lawyer notifications
+    {
+      userId: userMap.seniorLawyer.id,
+      organizationId: orgId,
+      type: "case_update" as const,
+      title: "Hearing Scheduled",
+      message: "Next hearing for Al-Amoudi case scheduled for next week.",
+      relatedCaseId: caseMap.amoudi.id,
+      read: false,
+      createdAt: twoHoursAgo,
+    },
+    {
+      userId: userMap.seniorLawyer.id,
+      organizationId: orgId,
+      type: "regulation_update" as const,
+      title: "Commercial regulation updated",
+      message: "A subscribed regulation for procurement contracts has a new version.",
+      relatedRegulationId: regMap.commercialCourt.id,
+      read: true,
+      readAt: oneDayAgo,
+      createdAt: threeDaysAgoNotif,
+    },
+
+    // Lawyer notifications
     {
       userId: userMap.lawyer.id,
       organizationId: orgId,
@@ -895,7 +1065,74 @@ async function main() {
       title: "New Document Added",
       message: "Construction contract uploaded to case C-2024-043.",
       relatedCaseId: caseMap.construction.id,
+      read: false,
+      createdAt: sixHoursAgo,
+    },
+    {
+      userId: userMap.lawyer.id,
+      organizationId: orgId,
+      type: "ai_suggestion" as const,
+      title: "AI found additional match",
+      message: "A new high-confidence regulation match was found for your case.",
+      relatedCaseId: caseMap.construction.id,
+      relatedRegulationId: regMap.constructionContract.id,
       read: true,
+      readAt: oneDayAgo,
+      createdAt: threeDaysAgoNotif,
+    },
+
+    // Paralegal notifications
+    {
+      userId: userMap.paralegal.id,
+      organizationId: orgId,
+      type: "case_update" as const,
+      title: "Document extraction ready",
+      message: "Insights are now available for the latest uploaded document.",
+      relatedCaseId: caseMap.amoudi.id,
+      read: false,
+      createdAt: oneDayAgo,
+    },
+
+    // Clerk notifications
+    {
+      userId: userMap.clerk.id,
+      organizationId: orgId,
+      type: "system" as const,
+      title: "Daily filing reminder",
+      message: "Please verify all pending filings before end of day.",
+      read: true,
+      readAt: oneWeekAgoDate,
+      createdAt: oneWeekAgoDate,
+    },
+
+    // Easy test users (organization 2)
+    {
+      userId: testUserMap.admin.id,
+      organizationId: orgId2,
+      type: "system" as const,
+      title: "Welcome to notification center",
+      message: "This sample alert helps you verify unread badges immediately.",
+      read: false,
+      createdAt: twoHoursAgo,
+    },
+    {
+      userId: testUserMap.lawyer.id,
+      organizationId: orgId2,
+      type: "case_update" as const,
+      title: "Sample case update",
+      message: "Test notification for lawyer@test.com",
+      read: false,
+      createdAt: sixHoursAgo,
+    },
+    {
+      userId: testUserMap.paralegal.id,
+      organizationId: orgId2,
+      type: "ai_suggestion" as const,
+      title: "Sample AI suggestion",
+      message: "Test notification for sara@test.com",
+      read: true,
+      readAt: oneDayAgo,
+      createdAt: threeDaysAgoNotif,
     },
   ];
 
@@ -920,6 +1157,7 @@ async function main() {
   console.log(`│ Documents              │     ${insertedDocs.length} │`);
   console.log(`│ User Activities        │     ${insertedActivities.length} │`);
   console.log(`│ User Achievements      │     ${insertedAchievements.length} │`);
+  console.log(`│ Notification Prefs     │     ${insertedPreferences.length} │`);
   console.log(`│ Notifications          │     ${insertedNotifications.length} │`);
   console.log("└──────────────────────────────┘");
   console.log("\n📧 Test Login Credentials:");

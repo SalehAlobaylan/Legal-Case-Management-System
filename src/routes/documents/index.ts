@@ -15,6 +15,7 @@ import {
 } from "fastify";
 import { DocumentService } from "../../services/document.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
+import { NotificationDeliveryService } from "../../services/notification-delivery.service";
 import type { Database } from "../../db/connection";
 import * as fs from "fs";
 import * as path from "path";
@@ -32,6 +33,11 @@ type RequestWithUser = FastifyRequest & {
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
   db: Database;
+  emitToUser?: (
+    userId: string,
+    event: string,
+    data: Record<string, unknown>
+  ) => void;
 };
 
 // Configure upload directory (can be overridden via env)
@@ -44,6 +50,10 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 
 const documentsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
+  const notificationDelivery = new NotificationDeliveryService(
+    app.db,
+    app.emitToUser
+  );
 
   // All routes require authentication
   app.addHook("onRequest", app.authenticate);
@@ -168,6 +178,15 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       const extractionService = new DocumentExtractionService(app.db);
       await extractionService.enqueueSingleDocument(document.id, user.orgId);
 
+      await notificationDelivery.notifyOrganization({
+        organizationId: user.orgId,
+        type: "case_update",
+        category: "caseUpdates",
+        title: "Document uploaded",
+        message: `"${data.filename}" was uploaded to case #${caseIdNum}.`,
+        relatedCaseId: caseIdNum,
+      });
+
       return reply.code(201).send({ document });
     }
   );
@@ -277,6 +296,15 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       if (fs.existsSync(document.filePath)) {
         fs.unlinkSync(document.filePath);
       }
+
+      await notificationDelivery.notifyOrganization({
+        organizationId: user.orgId,
+        type: "case_update",
+        category: "caseUpdates",
+        title: "Document deleted",
+        message: `"${document.originalName}" was deleted from case #${document.caseId}.`,
+        relatedCaseId: document.caseId,
+      });
 
       return reply.code(204).send();
     }

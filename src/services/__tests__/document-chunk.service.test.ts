@@ -31,16 +31,18 @@ function createMockDb(options?: {
   executeResult?: unknown[];
 }) {
   const documentOrgId = options?.documentOrgId ?? 1;
-  const findFirst = jest.fn().mockResolvedValue({
+  const findFirst = jest.fn().mockImplementation(async () => ({
     id: 10,
     case: {
       organizationId: documentOrgId,
     },
-  });
+  }));
 
   const insertReturning = options?.insertError
-    ? jest.fn().mockRejectedValue(options.insertError)
-    : jest.fn().mockResolvedValue([]);
+    ? jest.fn().mockImplementation(async () => {
+        throw options.insertError;
+      })
+    : jest.fn().mockImplementation(async () => []);
   const insertValues = jest.fn().mockReturnValue({
     returning: insertReturning,
   });
@@ -48,7 +50,7 @@ function createMockDb(options?: {
     values: insertValues,
   });
 
-  const deleteReturning = jest.fn().mockResolvedValue([]);
+  const deleteReturning = jest.fn().mockImplementation(async () => []);
   const deleteWhere = jest.fn().mockReturnValue({
     returning: deleteReturning,
   });

@@ -11,16 +11,19 @@ function vector(value: number): number[] {
 
 describe("DocumentRagService", () => {
   it("keeps ingestion idempotent for same source text", async () => {
-    const reindexChunksForDocument = jest.fn().mockResolvedValue([]);
+    const reindexChunksForDocument = jest.fn().mockImplementation(async () => []);
     const chunkService = {
       reindexChunksForDocument,
     };
     const aiClient = {
-      generateEmbeddings: jest.fn().mockImplementation(async (texts: string[]) => ({
-        embeddings: texts.map((_, index) => vector(index + 1)),
+      generateEmbeddings: jest.fn().mockImplementation(async (texts: unknown) => {
+        const list = Array.isArray(texts) ? texts : [];
+        return {
+        embeddings: list.map((_, index) => vector(index + 1)),
         dimension: DOCUMENT_CHUNK_EMBEDDING_DIMENSION,
-        count: texts.length,
-      })),
+        count: list.length,
+      };
+      }),
       generateEmbedding: jest.fn(),
     };
 
@@ -41,14 +44,18 @@ describe("DocumentRagService", () => {
     await service.reindexDocumentChunks(input);
 
     expect(reindexChunksForDocument).toHaveBeenCalledTimes(2);
-    const firstPayload = reindexChunksForDocument.mock.calls[0][2];
-    const secondPayload = reindexChunksForDocument.mock.calls[1][2];
+    const firstPayload = reindexChunksForDocument.mock.calls[0][2] as Array<
+      Record<string, unknown>
+    >;
+    const secondPayload = reindexChunksForDocument.mock.calls[1][2] as Array<
+      Record<string, unknown>
+    >;
     expect(firstPayload).toEqual(secondPayload);
     expect(firstPayload.length).toBeGreaterThan(0);
   });
 
   it("retrieves and formats citations with document scope", async () => {
-    const retrieveTopKChunksBySimilarity = jest.fn().mockResolvedValue([
+    const retrieveTopKChunksBySimilarity = jest.fn().mockImplementation(async () => [
       {
         id: 300,
         organizationId: 7,
@@ -78,7 +85,7 @@ describe("DocumentRagService", () => {
     };
     const aiClient = {
       generateEmbeddings: jest.fn(),
-      generateEmbedding: jest.fn().mockResolvedValue(vector(0.1)),
+      generateEmbedding: jest.fn().mockImplementation(async () => vector(0.1)),
     };
 
     const service = new DocumentRagService(
@@ -107,4 +114,3 @@ describe("DocumentRagService", () => {
     expect(result.contextText.startsWith("Earlier chunk")).toBe(true);
   });
 });
-

@@ -15,6 +15,10 @@ declare module "fastify" {
   interface FastifyInstance {
     io: SocketIOServer;
     /**
+     * Emit an event to a single user room.
+     */
+    emitToUser: (userId: string, event: string, data: any) => void;
+    /**
      * Broadcast a JSON-serializable message to all active Socket.IO
      * connections that belong to the given organization.
      */
@@ -99,7 +103,9 @@ const websocketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
 
     // Join organization room for targeted broadcasts
     const orgRoom = `org:${orgId}`;
+    const userRoom = `user:${userId}`;
     socket.join(orgRoom);
+    socket.join(userRoom);
 
     fastify.log.info(
       { orgId, userId, socketId: socket.id },
@@ -132,6 +138,17 @@ const websocketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
 
   // Decorate Fastify with Socket.IO instance
   fastify.decorate("io", io);
+
+  // Emit helper function
+  fastify.decorate("emitToUser", (userId: string, event: string, data: any) => {
+    const userRoom = `user:${userId}`;
+    const payload = {
+      ...data,
+      timestamp: new Date().toISOString(),
+    };
+
+    io.to(userRoom).emit(event, payload);
+  });
 
   // Broadcast helper function
   fastify.decorate(

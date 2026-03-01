@@ -3,23 +3,23 @@ import { DocumentExtractionService } from "../document-extraction.service";
 
 describe("DocumentExtractionService insights contract", () => {
   it("keeps summary/highlights and adds optional rag metadata", async () => {
-    const findDocument = jest.fn().mockResolvedValue({
+    const findDocument = jest.fn().mockImplementation(async () => ({
       id: 10,
       case: {
         organizationId: 1,
       },
-    });
+    }));
     const findExtraction = jest
       .fn()
-      .mockResolvedValueOnce({
+      .mockImplementationOnce(async () => ({
         id: 100,
         status: "ready",
         extractionMethod: "ocr_primary",
         errorCode: null,
         warningsJson: "[]",
         updatedAt: new Date("2026-02-24T00:00:00.000Z"),
-      })
-      .mockResolvedValueOnce({
+      }))
+      .mockImplementationOnce(async () => ({
         insightsStatus: "ready",
         insightsSummary: "Summary text",
         insightsHighlightsJson: JSON.stringify([
@@ -54,7 +54,7 @@ describe("DocumentExtractionService insights contract", () => {
         insightsErrorCode: null,
         insightsWarningsJson: "[]",
         insightsUpdatedAt: new Date("2026-02-24T00:01:00.000Z"),
-      });
+      }));
 
     const db = {
       query: {
@@ -82,4 +82,3 @@ describe("DocumentExtractionService insights contract", () => {
     expect(result.retrievalMeta?.topKReturned).toBe(1);
   });
 });
-

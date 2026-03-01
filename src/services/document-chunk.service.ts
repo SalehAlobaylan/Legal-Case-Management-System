@@ -265,10 +265,11 @@ export class DocumentChunkService {
     input: RetrieveDocumentChunksInput
   ): Promise<RetrievedDocumentChunk[]> {
     const topK = Math.max(1, Math.min(100, Math.floor(input.topK ?? 5)));
-    const hasDocumentScope = typeof input.documentId === "number";
+    const documentId = input.documentId;
+    const hasDocumentScope = typeof documentId === "number";
 
     if (hasDocumentScope) {
-      await this.assertDocumentOrgAccess(input.documentId, input.organizationId);
+      await this.assertDocumentOrgAccess(documentId, input.organizationId);
     }
 
     const queryVector = this.toVectorLiteral(input.embedding);
@@ -286,11 +287,11 @@ export class DocumentChunkService {
             1 - ("embedding" <=> ${queryVector}::vector) as "similarity"
           from "document_chunks"
           where "organization_id" = ${input.organizationId}
-            and "document_id" = ${input.documentId}
+            and "document_id" = ${documentId}
             and "embedding" is not null
           order by "embedding" <=> ${queryVector}::vector
           limit ${topK}
-        `)) as RetrievedDocumentChunkRow[])
+        `)) as unknown as RetrievedDocumentChunkRow[])
       : ((await this.db.execute(sql`
           select
             "id",
@@ -307,7 +308,7 @@ export class DocumentChunkService {
             and "embedding" is not null
           order by "embedding" <=> ${queryVector}::vector
           limit ${topK}
-        `)) as RetrievedDocumentChunkRow[]);
+        `)) as unknown as RetrievedDocumentChunkRow[]);
 
     return rows.map((row) => ({
       id: row.id,

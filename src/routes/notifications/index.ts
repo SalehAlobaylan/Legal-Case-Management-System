@@ -72,6 +72,7 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         user.id,
         { unreadOnly, limit, offset }
       );
+      const unreadCount = await notificationService.getUnreadCount(user.id);
 
       const alerts = notifications.map((notification) => ({
         id: notification.id,
@@ -86,8 +87,6 @@ const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         },
         createdAt: notification.createdAt,
       }));
-      const unreadCount = alerts.filter((alert) => !alert.isRead).length;
-
       return reply.send({ notifications, alerts, unreadCount });
     }
   );

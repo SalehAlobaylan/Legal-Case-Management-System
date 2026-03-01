@@ -2,7 +2,6 @@ import { createHash } from "crypto";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import {
-  notifications,
   regulationMonitorRuns,
   regulationSubscriptions,
   regulations,
@@ -10,6 +9,7 @@ import {
 } from "../db/schema";
 import { env } from "../config/env";
 import { AIClientService } from "./ai-client.service";
+import { NotificationDeliveryService } from "./notification-delivery.service";
 import { logger } from "../utils/logger";
 
 export interface RegulationMonitorRunOptions {
@@ -57,6 +57,11 @@ export class RegulationMonitorService {
     private readonly db: Database,
     private readonly broadcastToOrg?: (
       orgId: number,
+      event: string,
+      data: Record<string, unknown>
+    ) => void,
+    private readonly emitToUser?: (
+      userId: string,
       event: string,
       data: Record<string, unknown>
     ) => void
@@ -307,20 +312,26 @@ export class RegulationMonitorService {
       );
     }
 
-    const notificationRows = [...uniqueSubscribers.values()].map((subscriber) => ({
+    const notificationDelivery = new NotificationDeliveryService(
+      this.db,
+      this.emitToUser
+    );
+    const recipients = [...uniqueSubscribers.values()].map((subscriber) => ({
       userId: subscriber.userId,
       organizationId: subscriber.organizationId,
-      type: "regulation_update" as const,
+    }));
+    await notificationDelivery.notifyUsers({
+      recipients,
+      type: "regulation_update",
+      category: "regulationUpdates",
       title: `Regulation #${regulationId} updated`,
       message: `A new version (v${versionNumber}) was detected for a subscribed regulation.`,
       relatedRegulationId: regulationId,
       createdAt: now,
-    }));
-
-    await this.db.insert(notifications).values(notificationRows);
+    });
 
     if (typeof this.broadcastToOrg === "function") {
-      const orgIds = new Set(notificationRows.map((row) => row.organizationId));
+      const orgIds = new Set(recipients.map((recipient) => recipient.organizationId));
       for (const orgId of orgIds) {
         this.broadcastToOrg(orgId, "regulation-updated", {
           regulationId,

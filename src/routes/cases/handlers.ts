@@ -20,6 +20,7 @@ import {
 } from "./schemas";
 import type { Database } from "../../db/connection";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
+import { NotificationDeliveryService } from "../../services/notification-delivery.service";
 
 type RequestWithUserAndDb = FastifyRequest & {
   user: {
@@ -30,6 +31,11 @@ type RequestWithUserAndDb = FastifyRequest & {
   };
   server: FastifyInstance & {
     db: Database;
+    emitToUser?: (
+      userId: string,
+      event: string,
+      data: Record<string, unknown>
+    ) => void;
   };
 };
 
@@ -60,6 +66,19 @@ export async function createCaseHandler(
     },
     user.id
   );
+
+  const notificationDelivery = new NotificationDeliveryService(
+    server.db,
+    server.emitToUser
+  );
+  await notificationDelivery.notifyOrganization({
+    organizationId: user.orgId,
+    type: "case_update",
+    category: "caseUpdates",
+    title: `Case created: ${newCase.caseNumber}`,
+    message: newCase.title,
+    relatedCaseId: newCase.id,
+  });
 
   return reply.code(201).send({ case: newCase });
 }
@@ -147,6 +166,19 @@ export async function updateCaseHandler(
     const extractionService = new DocumentExtractionService(server.db);
     await extractionService.markCaseInsightsStale(id, user.orgId);
   }
+
+  const notificationDelivery = new NotificationDeliveryService(
+    server.db,
+    server.emitToUser
+  );
+  await notificationDelivery.notifyOrganization({
+    organizationId: user.orgId,
+    type: "case_update",
+    category: "caseUpdates",
+    title: `Case updated: ${updated.caseNumber}`,
+    message: updated.title,
+    relatedCaseId: updated.id,
+  });
 
   return reply.send({ case: updated });
 }

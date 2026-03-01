@@ -11,6 +11,7 @@ import { randomUUID } from "crypto";
 import type { Database } from "../../db/connection";
 import { DocumentService } from "../../services/document.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
+import { NotificationDeliveryService } from "../../services/notification-delivery.service";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -24,6 +25,11 @@ type RequestWithUser = FastifyRequest & {
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
   db: Database;
+  emitToUser?: (
+    userId: string,
+    event: string,
+    data: Record<string, unknown>
+  ) => void;
 };
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads";
@@ -33,6 +39,10 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 
 const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
+  const notificationDelivery = new NotificationDeliveryService(
+    app.db,
+    app.emitToUser
+  );
   app.addHook("onRequest", app.authenticate);
 
   fastify.get(
@@ -127,6 +137,15 @@ const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const extractionService = new DocumentExtractionService(app.db);
       await extractionService.enqueueSingleDocument(document.id, user.orgId);
+
+      await notificationDelivery.notifyOrganization({
+        organizationId: user.orgId,
+        type: "case_update",
+        category: "caseUpdates",
+        title: "Document uploaded",
+        message: `"${data.filename}" was uploaded to case #${caseIdNum}.`,
+        relatedCaseId: caseIdNum,
+      });
 
       return reply.code(201).send({ document });
     }

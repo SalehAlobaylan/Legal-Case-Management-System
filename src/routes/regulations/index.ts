@@ -38,6 +38,11 @@ import { RegulationSourceService } from "../../services/regulation-source.servic
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
   broadcastToOrg?: (orgId: number, event: string, data: Record<string, unknown>) => void;
+  emitToUser?: (
+    userId: string,
+    event: string,
+    data: Record<string, unknown>
+  ) => void;
   db: Database;
 };
 
@@ -326,7 +331,8 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const monitorService = new RegulationMonitorService(
         app.db,
-        app.broadcastToOrg
+        app.broadcastToOrg,
+        app.emitToUser
       );
       const result = await monitorService.runDueSubscriptions({
         regulationId:

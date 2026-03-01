@@ -8,8 +8,9 @@
 
 import { eq } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { clients, users, notifications, type NewNotification } from "../db/schema";
+import { clients, users } from "../db/schema";
 import { NotFoundError, ForbiddenError } from "../utils/errors";
+import { NotificationDeliveryService } from "./notification-delivery.service";
 
 export interface SendMessageInput {
   clientId: number;
@@ -20,7 +21,14 @@ export interface SendMessageInput {
 }
 
 export class ClientMessagingService {
-  constructor(private db: Database) {}
+  constructor(
+    private db: Database,
+    private readonly emitToUser?: (
+      userId: string,
+      event: string,
+      data: Record<string, unknown>
+    ) => void
+  ) {}
 
   /**
    * sendMessageToClient
@@ -58,24 +66,31 @@ export class ClientMessagingService {
       },
     });
 
-    // Create notifications for all team members
-    const notificationPromises = orgUsers.map((user) =>
-      this.db.insert(notifications).values({
+    const notificationDelivery = new NotificationDeliveryService(
+      this.db,
+      this.emitToUser
+    );
+    const titleByType: Record<SendMessageInput["type"], string> = {
+      case_update: `Case update sent to client: ${client.name}`,
+      hearing_reminder: `Hearing reminder sent to client: ${client.name}`,
+      document_request: `Document request sent to client: ${client.name}`,
+      general: `Message sent to client: ${client.name}`,
+    };
+    const deliveryResult = await notificationDelivery.notifyUsers({
+      recipients: orgUsers.map((user) => ({
         userId: user.id,
         organizationId: orgId,
-        type: "case_update", // Using case_update type for client messages
-        title: `Message sent to client: ${client.name}`,
-        message: message,
-        read: false,
-      } as NewNotification)
-    );
-
-    await Promise.all(notificationPromises);
+      })),
+      type: "case_update",
+      category: "caseUpdates",
+      title: titleByType[type],
+      message,
+    });
 
     return {
       success: true,
       message: `Message sent to ${client.name}`,
-      notifiedCount: orgUsers.length,
+      notifiedCount: deliveryResult.created,
     };
   }
 }

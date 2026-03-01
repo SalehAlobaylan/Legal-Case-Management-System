@@ -50,7 +50,7 @@ export function configurePassport(db: Database) {
           done(error, undefined);
         }
       }
-    )
+    ) as any
   );
 
   // Serialize user into session (not used with JWT, but required by Passport)
