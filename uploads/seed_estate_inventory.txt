@@ -1,0 +1,2 @@
+[Seed placeholder] Estate Inventory Report
+This file was created by the database seed for development/demo purposes.

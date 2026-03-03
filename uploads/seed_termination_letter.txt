@@ -1,0 +1,2 @@
+[Seed placeholder] Termination Letter
+This file was created by the database seed for development/demo purposes.

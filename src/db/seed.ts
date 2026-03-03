@@ -13,6 +13,8 @@ import { userActivities } from "./schema/user-activities";
 import { userAchievements } from "./schema/user-achievements";
 import { sql } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import fs from "fs";
+import path from "path";
 
 const SALT_ROUNDS = 10;
 const FORCE_MODE = process.argv.includes("--force");
@@ -596,12 +598,28 @@ async function main() {
   // 8. DOCUMENTS
   // ==========================================
   console.log("📄 Seeding documents...");
+
+  // Create placeholder files in the uploads directory so the backend can serve them
+  const uploadDir = path.resolve(process.cwd(), "uploads");
+  fs.mkdirSync(uploadDir, { recursive: true });
+
+  const makePlaceholder = (fileName: string, label: string): string => {
+    const filePath = path.resolve(uploadDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(
+        filePath,
+        `[Seed placeholder] ${label}\nThis file was created by the database seed for development/demo purposes.\n`
+      );
+    }
+    return filePath;
+  };
+
   const docsData = [
     {
       caseId: caseMap.amoudi.id,
       fileName: "employment_contract.pdf",
       originalName: "Employment Contract - Al-Amoudi.pdf",
-      filePath: "/uploads/cases/1/employment_contract.pdf",
+      filePath: makePlaceholder("seed_employment_contract.txt", "Employment Contract - Al-Amoudi"),
       fileSize: 245760,
       mimeType: "application/pdf",
       uploadedBy: userMap.seniorLawyer.id,
@@ -610,7 +628,7 @@ async function main() {
       caseId: caseMap.amoudi.id,
       fileName: "termination_letter.pdf",
       originalName: "Termination Letter.pdf",
-      filePath: "/uploads/cases/1/termination_letter.pdf",
+      filePath: makePlaceholder("seed_termination_letter.txt", "Termination Letter"),
       fileSize: 102400,
       mimeType: "application/pdf",
       uploadedBy: userMap.seniorLawyer.id,
@@ -619,7 +637,7 @@ async function main() {
       caseId: caseMap.amoudi.id,
       fileName: "salary_slips.pdf",
       originalName: "Salary Slips.pdf",
-      filePath: "/uploads/cases/1/salary_slips.pdf",
+      filePath: makePlaceholder("seed_salary_slips.txt", "Salary Slips"),
       fileSize: 512000,
       mimeType: "application/pdf",
       uploadedBy: userMap.paralegal.id,
@@ -628,7 +646,7 @@ async function main() {
       caseId: caseMap.alfahman.id,
       fileName: "estate_inventory.docx",
       originalName: "Estate Inventory Report.docx",
-      filePath: "/uploads/cases/2/estate_inventory.docx",
+      filePath: makePlaceholder("seed_estate_inventory.txt", "Estate Inventory Report"),
       fileSize: 512000,
       mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       uploadedBy: userMap.admin.id,
@@ -637,7 +655,7 @@ async function main() {
       caseId: caseMap.construction.id,
       fileName: "construction_contract.pdf",
       originalName: "Main Construction Contract.pdf",
-      filePath: "/uploads/cases/3/construction_contract.pdf",
+      filePath: makePlaceholder("seed_construction_contract.txt", "Main Construction Contract"),
       fileSize: 1048576,
       mimeType: "application/pdf",
       uploadedBy: userMap.lawyer.id,
@@ -646,7 +664,7 @@ async function main() {
       caseId: caseMap.dosari.id,
       fileName: "employment_agreement.pdf",
       originalName: "Employment Agreement.pdf",
-      filePath: "/uploads/cases/4/employment_agreement.pdf",
+      filePath: makePlaceholder("seed_employment_agreement.txt", "Employment Agreement"),
       fileSize: 350000,
       mimeType: "application/pdf",
       uploadedBy: userMap.seniorLawyer.id,

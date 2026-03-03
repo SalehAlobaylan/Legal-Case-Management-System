@@ -1,0 +1,2 @@
+[Seed placeholder] Main Construction Contract
+This file was created by the database seed for development/demo purposes.

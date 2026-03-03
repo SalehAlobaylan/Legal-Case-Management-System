@@ -1,0 +1,2 @@
+[Seed placeholder] Employment Contract - Al-Amoudi
+This file was created by the database seed for development/demo purposes.
