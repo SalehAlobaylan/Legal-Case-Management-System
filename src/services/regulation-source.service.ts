@@ -63,7 +63,40 @@ interface MojRegulationCandidate {
   effectiveDate?: string;
 }
 
+interface MojGatewayStatuteRow {
+  serial?: string;
+  statuteName?: string;
+  legalType?: string | null;
+  legalStatueName?: string | null;
+  legalStatue?: number | null;
+  gregorianValidFromDate?: string | null;
+  activationDateG?: string | null;
+  issuanceDateG?: string | null;
+  issueDateG?: string | null;
+  publishDateG?: string | null;
+}
+
+interface MojGatewaySearchResponse {
+  success?: boolean;
+  message?: string;
+  model?: {
+    collection?: MojGatewayStatuteRow[];
+    pageNumber?: number;
+    pageSize?: number;
+    totalCount?: number;
+    totalPages?: number;
+  };
+}
+
+interface MojListingPageResult {
+  listingUrl: string;
+  candidates: MojRegulationCandidate[];
+  totalPages?: number;
+}
+
 const MOJ_HOST = "laws.moj.gov.sa";
+const MOJ_GATEWAY_BASE_URL = "https://laws-gateway.moj.gov.sa/apis/legislations/v1";
+const MOJ_GATEWAY_SEARCH_URL = `${MOJ_GATEWAY_BASE_URL}/statute/section-search`;
 const DEFAULT_LISTING_URL =
   "https://laws.moj.gov.sa/ar/legislations-regulations?pageNumber=1&pageSize=9&sortingBy=7";
 
@@ -102,21 +135,38 @@ export class RegulationSourceService {
 
   private canonicalizeMojUrl(href: string, baseUrl: string): string | null {
     try {
-      const url = new URL(href, baseUrl);
+      const normalizedHref = href.replace(/\\\//g, "/").trim();
+      const url = new URL(normalizedHref, baseUrl);
 
       if (url.hostname.toLowerCase() !== MOJ_HOST) {
         return null;
       }
-      if (!url.pathname.includes("/legislations-regulations")) {
+      if (!url.pathname || url.pathname === "/") {
         return null;
       }
 
       const normalizedPath = url.pathname.replace(/\/+$/, "");
-      if (normalizedPath === "/ar/legislations-regulations") {
+      const lowerPath = normalizedPath.toLowerCase();
+      if (
+        lowerPath === "/ar/legislations-regulations" ||
+        lowerPath === "/legislations-regulations" ||
+        lowerPath === "/ar" ||
+        lowerPath === "/en"
+      ) {
         return null;
       }
-      if (url.searchParams.has("pageNumber")) {
+      if (/\.(css|js|map|png|jpe?g|svg|gif|ico|woff2?|ttf|eot)$/i.test(lowerPath)) {
         return null;
+      }
+
+      if (url.searchParams.has("pageNumber")) {
+        url.searchParams.delete("pageNumber");
+      }
+      if (url.searchParams.has("pageSize")) {
+        url.searchParams.delete("pageSize");
+      }
+      if (url.searchParams.has("sortingBy")) {
+        url.searchParams.delete("sortingBy");
       }
 
       url.hash = "";
@@ -124,6 +174,128 @@ export class RegulationSourceService {
     } catch {
       return null;
     }
+  }
+
+  private getUrlPath(sourceUrl: string): string {
+    try {
+      return new URL(sourceUrl).pathname.toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+
+  private isLikelyRegulationTitle(title: string): boolean {
+    const normalized = this.normalizeWhitespace(title).toLowerCase();
+    if (!normalized || normalized.length < 4) {
+      return false;
+    }
+
+    return /(لائحة|نظام|تشريع|قانون|قرار|law|regulation|legislation|statute|bylaw|decree)/i.test(
+      normalized
+    );
+  }
+
+  private isLikelyRegulationUrl(sourceUrl: string): boolean {
+    const path = this.getUrlPath(sourceUrl);
+    if (!path) {
+      return false;
+    }
+
+    return /(legislation|regulation|laws|نظام|لائحة|law)/i.test(path);
+  }
+
+  private inferTitleFromUrl(sourceUrl: string): string {
+    try {
+      const url = new URL(sourceUrl);
+      const rawSegment = decodeURIComponent(
+        url.pathname.split("/").filter(Boolean).pop() || ""
+      );
+      const cleaned = this.normalizeWhitespace(
+        rawSegment.replace(/[-_]+/g, " ").replace(/\.[a-z0-9]+$/i, "")
+      );
+      if (cleaned && cleaned.length >= 4) {
+        return cleaned;
+      }
+
+      const idMatch = url.pathname.match(/(\d{2,})/);
+      if (idMatch?.[1]) {
+        return `MOJ Regulation ${idMatch[1]}`;
+      }
+    } catch {
+      // ignore and use fallback
+    }
+
+    return "MOJ Regulation";
+  }
+
+  private normalizeEmbeddedUrl(raw: string): string {
+    return raw
+      .replace(/\\u002F/gi, "/")
+      .replace(/\\\//g, "/")
+      .trim();
+  }
+
+  private toDateOnly(value?: string | null): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const directDate = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (directDate?.[1]) {
+      return directDate[1];
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return undefined;
+    }
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  private buildMojPublicRegulationUrl(serial: string): string {
+    return `https://${MOJ_HOST}/ar/legislation/${encodeURIComponent(serial)}`;
+  }
+
+  private inferStatusFromGateway(row: MojGatewayStatuteRow): RegulationStatus {
+    const name = (row.legalStatueName || "").toLowerCase();
+    if (/(ملغى|repealed|إلغاء)/i.test(name)) {
+      return "repealed";
+    }
+    if (/(مسودة|draft)/i.test(name)) {
+      return "draft";
+    }
+    if (/(معدل|amended|تعديل)/i.test(name)) {
+      return "amended";
+    }
+    return "active";
+  }
+
+  private mapGatewayRowToCandidate(
+    row: MojGatewayStatuteRow,
+    sourceListingUrl: string
+  ): MojRegulationCandidate | null {
+    const serial = this.normalizeWhitespace(row.serial || "");
+    const title = this.normalizeWhitespace(row.statuteName || "");
+    if (!serial || !title) {
+      return null;
+    }
+
+    const effectiveDate =
+      this.toDateOnly(row.gregorianValidFromDate) ||
+      this.toDateOnly(row.activationDateG) ||
+      this.toDateOnly(row.issuanceDateG) ||
+      this.toDateOnly(row.issueDateG) ||
+      this.toDateOnly(row.publishDateG);
+
+    return {
+      title,
+      sourceUrl: this.buildMojPublicRegulationUrl(serial),
+      sourceListingUrl,
+      regulationNumber: serial,
+      category: this.inferCategory(`${title} ${row.legalType || ""}`),
+      status: this.inferStatusFromGateway(row),
+      effectiveDate,
+    };
   }
 
   private inferRegulationNumber(title: string): string | undefined {
@@ -159,43 +331,105 @@ export class RegulationSourceService {
     html: string,
     listingUrl: string
   ): MojRegulationCandidate[] {
-    const candidates: MojRegulationCandidate[] = [];
-    const seen = new Set<string>();
-    const anchorRegex =
-      /<a\b([^>]*?)href\s*=\s*["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi;
+    const byUrl = new Map<string, MojRegulationCandidate>();
+    const pushCandidate = (sourceUrl: string, titleSeed?: string) => {
+      const hasRegulationUrl = this.isLikelyRegulationUrl(sourceUrl);
+      const normalizedTitle = this.normalizeWhitespace(
+        this.decodeHtmlEntities(titleSeed || "")
+      );
+      const hasExplicitTitle = normalizedTitle.length >= 4;
+      const title = hasExplicitTitle
+        ? normalizedTitle
+        : this.inferTitleFromUrl(sourceUrl);
 
-    let match: RegExpExecArray | null;
-    while ((match = anchorRegex.exec(html)) !== null) {
-      const attrs = `${match[1] || ""} ${match[3] || ""}`;
-      const href = match[2] || "";
-      const innerHtml = match[4] || "";
+      if (!hasRegulationUrl && !this.isLikelyRegulationTitle(title)) {
+        return;
+      }
 
-      const sourceUrl = this.canonicalizeMojUrl(href, listingUrl);
-      if (!sourceUrl || seen.has(sourceUrl)) {
+      const existing = byUrl.get(sourceUrl);
+      if (existing && !hasExplicitTitle) {
+        return;
+      }
+
+      const selectedTitle = hasExplicitTitle ? title : existing?.title || title;
+
+      byUrl.set(sourceUrl, {
+        title: selectedTitle,
+        sourceUrl,
+        sourceListingUrl: listingUrl,
+        regulationNumber: this.inferRegulationNumber(selectedTitle),
+        category: this.inferCategory(selectedTitle),
+        status: this.inferStatus(selectedTitle),
+      });
+    };
+
+    const anchorRegex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+    let anchorMatch: RegExpExecArray | null;
+    while ((anchorMatch = anchorRegex.exec(html)) !== null) {
+      const attrs = anchorMatch[1] || "";
+      const innerHtml = anchorMatch[2] || "";
+      const hrefMatch = attrs.match(
+        /\b(?:href|data-href|data-url)\s*=\s*["']([^"']+)["']/i
+      );
+      if (!hrefMatch?.[1]) {
+        continue;
+      }
+
+      const sourceUrl = this.canonicalizeMojUrl(
+        this.normalizeEmbeddedUrl(hrefMatch[1]),
+        listingUrl
+      );
+      if (!sourceUrl) {
         continue;
       }
 
       const titleAttrMatch = attrs.match(/title\s*=\s*["']([^"']+)["']/i);
       const titleFromInner = this.decodeHtmlEntities(this.stripHtml(innerHtml));
       const titleFromAttr = this.decodeHtmlEntities(titleAttrMatch?.[1] || "");
-      const title = this.normalizeWhitespace(titleFromInner || titleFromAttr);
-
-      if (!title || title.length < 4) {
-        continue;
-      }
-
-      seen.add(sourceUrl);
-      candidates.push({
-        title,
-        sourceUrl,
-        sourceListingUrl: listingUrl,
-        regulationNumber: this.inferRegulationNumber(title),
-        category: this.inferCategory(title),
-        status: this.inferStatus(title),
-      });
+      pushCandidate(sourceUrl, titleFromInner || titleFromAttr);
     }
 
-    return candidates;
+    const attrUrlRegex = /\b(?:href|data-href|data-url)\s*=\s*["']([^"']+)["']/gi;
+    let attrMatch: RegExpExecArray | null;
+    while ((attrMatch = attrUrlRegex.exec(html)) !== null) {
+      const sourceUrl = this.canonicalizeMojUrl(
+        this.normalizeEmbeddedUrl(attrMatch[1]),
+        listingUrl
+      );
+      if (!sourceUrl) {
+        continue;
+      }
+      pushCandidate(sourceUrl);
+    }
+
+    const jsonPairRegex =
+      /"(?:title|name)"\s*:\s*"([^"]{4,500})"[\s\S]{0,240}?"(?:url|href|link)"\s*:\s*"([^"]+)"/gi;
+    let jsonPairMatch: RegExpExecArray | null;
+    while ((jsonPairMatch = jsonPairRegex.exec(html)) !== null) {
+      const sourceUrl = this.canonicalizeMojUrl(
+        this.normalizeEmbeddedUrl(jsonPairMatch[2]),
+        listingUrl
+      );
+      if (!sourceUrl) {
+        continue;
+      }
+      pushCandidate(sourceUrl, this.normalizeEmbeddedUrl(jsonPairMatch[1]));
+    }
+
+    const jsonUrlRegex = /"(?:url|href|link)"\s*:\s*"([^"]+)"/gi;
+    let jsonUrlMatch: RegExpExecArray | null;
+    while ((jsonUrlMatch = jsonUrlRegex.exec(html)) !== null) {
+      const sourceUrl = this.canonicalizeMojUrl(
+        this.normalizeEmbeddedUrl(jsonUrlMatch[1]),
+        listingUrl
+      );
+      if (!sourceUrl) {
+        continue;
+      }
+      pushCandidate(sourceUrl);
+    }
+
+    return [...byUrl.values()];
   }
 
   private buildMojListingUrl(pageNumber: number): string {
@@ -211,7 +445,78 @@ export class RegulationSourceService {
     return url.toString();
   }
 
-  private async fetchMojListingPage(pageNumber: number) {
+  private async fetchMojGatewayPage(pageNumber: number): Promise<MojListingPageResult> {
+    const listingUrl = `${MOJ_GATEWAY_SEARCH_URL}?pageNumber=${pageNumber}`;
+    const response = await fetch(MOJ_GATEWAY_SEARCH_URL, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        languageCode: "ar",
+      },
+      body: JSON.stringify({
+        pageNumber,
+        pageSize: 9,
+        keyword: "",
+        detailsKeyword: "",
+        LegalStatue: null,
+        classificationId: null,
+        sortingBy: 7,
+        statuteIssueDateFrom: null,
+        statuteIssueDateTo: null,
+        statuteName: "",
+        statutePublishDateFrom: null,
+        statutePublishDateTo: null,
+        statuteType: null,
+        isSearch: false,
+        identityNumber: "",
+      }),
+      redirect: "follow",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gateway HTTP ${response.status} for page ${pageNumber}`);
+    }
+
+    const payload = (await response.json()) as MojGatewaySearchResponse;
+    if (!payload?.success) {
+      throw new Error(payload?.message || "Gateway search returned unsuccessful status");
+    }
+
+    const rows = Array.isArray(payload?.model?.collection)
+      ? payload.model.collection
+      : [];
+    const candidates = rows
+      .map((row) => this.mapGatewayRowToCandidate(row, listingUrl))
+      .filter((row): row is MojRegulationCandidate => Boolean(row));
+    const totalPages =
+      typeof payload?.model?.totalPages === "number" && payload.model.totalPages > 0
+        ? payload.model.totalPages
+        : undefined;
+
+    return {
+      listingUrl,
+      candidates,
+      totalPages,
+    };
+  }
+
+  private async fetchMojListingPage(pageNumber: number): Promise<MojListingPageResult> {
+    try {
+      return await this.fetchMojGatewayPage(pageNumber);
+    } catch (gatewayError) {
+      logger.warn(
+        {
+          pageNumber,
+          err:
+            gatewayError instanceof Error
+              ? gatewayError.message
+              : "unknown_gateway_error",
+        },
+        "MOJ gateway search failed; falling back to HTML listing parse"
+      );
+    }
+
     const listingUrl = this.buildMojListingUrl(pageNumber);
     const response = await fetch(listingUrl, {
       headers: {
@@ -226,7 +531,7 @@ export class RegulationSourceService {
 
     const html = await response.text();
     const candidates = this.extractCandidatesFromListing(html, listingUrl);
-    return { listingUrl, candidates };
+    return { listingUrl, candidates, totalPages: undefined };
   }
 
   private async upsertRegulation(
@@ -413,6 +718,7 @@ export class RegulationSourceService {
 
     try {
       const byUrl = new Map<string, MojRegulationCandidate>();
+      let totalPagesHint: number | undefined;
 
       for (let page = 1; page <= maxPages; page += 1) {
         let listing;
@@ -430,6 +736,13 @@ export class RegulationSourceService {
           continue;
         }
 
+        if (
+          typeof listing.totalPages === "number" &&
+          listing.totalPages > 0
+        ) {
+          totalPagesHint = listing.totalPages;
+        }
+
         if (listing.candidates.length === 0) {
           if (page > 1) {
             break;
@@ -439,6 +752,10 @@ export class RegulationSourceService {
 
         for (const candidate of listing.candidates) {
           byUrl.set(candidate.sourceUrl, candidate);
+        }
+
+        if (typeof totalPagesHint === "number" && page >= totalPagesHint) {
+          break;
         }
       }
 

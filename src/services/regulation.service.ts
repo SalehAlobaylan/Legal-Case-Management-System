@@ -107,7 +107,7 @@ export class RegulationService {
     }
 
     const page = Math.max(1, Number(filters?.page || 1));
-    const limit = Math.min(100, Math.max(1, Number(filters?.limit || 10)));
+    const limit = Math.min(100, Math.max(1, Number(filters?.limit || 100)));
     const offset = (page - 1) * limit;
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

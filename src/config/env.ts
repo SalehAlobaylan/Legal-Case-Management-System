@@ -33,7 +33,7 @@ const envSchema = z.object({
     .default(
       "https://laws.moj.gov.sa/ar/legislations-regulations?pageNumber=1&pageSize=9&sortingBy=7"
     ),
-  REG_SOURCE_MOJ_MAX_PAGES: z.coerce.number().int().min(1).max(100).default(5),
+  REG_SOURCE_MOJ_MAX_PAGES: z.coerce.number().int().min(1).max(100).default(100),
   CASE_DOC_EXTRACTION_ENABLED: z.coerce.boolean().default(true),
   CASE_DOC_EXTRACTION_BATCH_SIZE: z.coerce.number().int().min(1).max(200).default(20),
   CASE_DOC_EXTRACTION_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(3),
