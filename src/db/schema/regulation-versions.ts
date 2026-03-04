@@ -6,7 +6,9 @@ import {
   varchar,
   timestamp,
   uniqueIndex,
+  jsonb,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { regulations } from "./regulations";
 
@@ -22,6 +24,15 @@ export const regulationVersions = pgTable(
     contentHash: varchar("content_hash", { length: 64 }).notNull(),
     rawHtml: text("raw_html"),
     artifactUri: varchar("artifact_uri", { length: 500 }),
+    sourceMetadata: jsonb("source_metadata")
+      .$type<Record<string, unknown>>()
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
+    sourceMetadataHash: varchar("source_metadata_hash", { length: 64 }),
+    extractionMetadata: jsonb("extraction_metadata")
+      .$type<Record<string, unknown>>()
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
     changesSummary: text("changes_summary"),
     fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
     createdBy: varchar("created_by", { length: 50 })
@@ -48,5 +59,4 @@ export const regulationVersionsRelations = relations(
 
 export type RegulationVersion = typeof regulationVersions.$inferSelect;
 export type NewRegulationVersion = typeof regulationVersions.$inferInsert;
-
 

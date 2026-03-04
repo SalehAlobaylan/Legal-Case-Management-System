@@ -34,6 +34,7 @@ import { CaseService } from "../../services/case.service";
 import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
 import { RegulationMonitorService } from "../../services/regulation-monitor.service";
 import { RegulationSourceService } from "../../services/regulation-source.service";
+import { logger } from "../../utils/logger";
 
 type AuthenticatedFastifyInstance = FastifyInstance & {
   authenticate: (request: FastifyRequest) => Promise<void>;
@@ -415,6 +416,7 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
           properties: {
             maxPages: { type: "number" },
             extractContent: { type: "boolean" },
+            runInBackground: { type: "boolean" },
           },
         },
       } as FastifySchema,
@@ -424,6 +426,7 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
         body: {
           maxPages?: number;
           extractContent?: boolean;
+          runInBackground?: boolean;
         };
       };
       if (user.role !== "admin") {
@@ -431,14 +434,72 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const sourceService = new RegulationSourceService(app.db);
-      const result = await sourceService.syncMojSource({
+      const syncOptions = {
         maxPages:
           typeof body?.maxPages === "number" ? Math.max(1, body.maxPages) : undefined,
         extractContent:
           typeof body?.extractContent === "boolean" ? body.extractContent : true,
         triggeredByUserId: user.id,
         triggerSource: "moj_source_sync",
-      });
+      } as const;
+      const runInBackground = body?.runInBackground === true;
+
+      if (runInBackground) {
+        logger.info(
+          {
+            triggerSource: syncOptions.triggerSource,
+            triggeredByUserId: user.id,
+            orgId: user.orgId,
+            maxPages: syncOptions.maxPages,
+            extractContent: syncOptions.extractContent,
+          },
+          "Queued MOJ source synchronization in background"
+        );
+
+        void sourceService
+          .syncMojSource(syncOptions)
+          .then((result) => {
+            logger.info(
+              {
+                triggerSource: syncOptions.triggerSource,
+                triggeredByUserId: user.id,
+                orgId: user.orgId,
+                result,
+              },
+              "Completed queued MOJ source synchronization"
+            );
+            app.broadcastToOrg?.(user.orgId, "regulation_updated", {
+              type: "source_sync_completed",
+              result,
+              triggeredByUserId: user.id,
+              timestamp: new Date().toISOString(),
+            });
+          })
+          .catch((error) => {
+            logger.error(
+              {
+                err: error,
+                triggerSource: syncOptions.triggerSource,
+                triggeredByUserId: user.id,
+                orgId: user.orgId,
+              },
+              "Queued MOJ source synchronization failed"
+            );
+            app.broadcastToOrg?.(user.orgId, "regulation_updated", {
+              type: "source_sync_failed",
+              reason: error instanceof Error ? error.message : "unknown_sync_error",
+              triggeredByUserId: user.id,
+              timestamp: new Date().toISOString(),
+            });
+          });
+
+        return reply.code(202).send({
+          queued: true,
+          message: "MOJ source sync started in background",
+        });
+      }
+
+      const result = await sourceService.syncMojSource(syncOptions);
       return reply.send({ result });
     }
   );

@@ -3,6 +3,7 @@ import fp from "fastify-plugin";
 import { AppError } from "../utils/errors";
 import { ZodError } from "zod";
 import { logger } from "../utils/logger";
+import { env } from "../config/env";
 
 const errorHandlerPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.setErrorHandler(
@@ -36,9 +37,24 @@ const errorHandlerPlugin: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const pgCode = (error as any)?.code as string | undefined;
+      if (pgCode && ["42703", "42P01", "42704"].includes(pgCode)) {
+        return reply.code(500).send({
+          error:
+            "Database schema appears out of date. Run backend migrations and restart the server.",
+          code: pgCode,
+          ...(env.NODE_ENV !== "production"
+            ? { details: (error as any)?.message || "schema_mismatch" }
+            : {}),
+        });
+      }
+
       // Unknown errors
       return reply.code(500).send({
         error: "Internal Server Error",
+        ...(env.NODE_ENV !== "production"
+          ? { details: (error as any)?.message || "unknown_error" }
+          : {}),
       });
     }
   );
@@ -47,4 +63,3 @@ const errorHandlerPlugin: FastifyPluginAsync = async (fastify) => {
 export default fp(errorHandlerPlugin, {
   name: "error-handler",
 });
-

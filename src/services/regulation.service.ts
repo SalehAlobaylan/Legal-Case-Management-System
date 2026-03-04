@@ -73,7 +73,28 @@ export class RegulationService {
       throw new NotFoundError("Regulation");
     }
 
-    return regulation;
+    const latestVersion = await this.db.query.regulationVersions.findFirst({
+      where: eq(regulationVersions.regulationId, id),
+      columns: {
+        id: true,
+        versionNumber: true,
+        content: true,
+        contentHash: true,
+        extractionMetadata: true,
+        fetchedAt: true,
+      },
+      orderBy: [desc(regulationVersions.versionNumber)],
+    });
+
+    return {
+      ...regulation,
+      latestVersionId: latestVersion?.id || null,
+      latestVersionNumber: latestVersion?.versionNumber || null,
+      latestContent: latestVersion?.content || null,
+      latestContentHash: latestVersion?.contentHash || null,
+      latestFetchedAt: latestVersion?.fetchedAt || null,
+      latestExtractionMetadata: latestVersion?.extractionMetadata || {},
+    };
   }
 
   /*
@@ -114,6 +135,23 @@ export class RegulationService {
     const [rows, totalRows] = await Promise.all([
       this.db.query.regulations.findMany({
         where: whereClause,
+        columns: {
+          id: true,
+          title: true,
+          regulationNumber: true,
+          sourceUrl: true,
+          sourceProvider: true,
+          sourceSerial: true,
+          sourceListingUrl: true,
+          sourceMetadataHash: true,
+          summary: true,
+          category: true,
+          jurisdiction: true,
+          status: true,
+          effectiveDate: true,
+          createdAt: true,
+          updatedAt: true,
+        },
         orderBy: [desc(regulations.updatedAt), desc(regulations.createdAt)],
         limit,
         offset,
