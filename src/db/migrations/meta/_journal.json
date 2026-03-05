@@ -113,6 +113,13 @@
       "when": 1772575200000,
       "tag": "0015_complete_regulation_source_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1772805600000,
+      "tag": "0016_regulation_ai_insights",
+      "breakpoints": true
     }
   ]
 }

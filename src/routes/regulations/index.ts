@@ -34,6 +34,8 @@ import { CaseService } from "../../services/case.service";
 import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
 import { RegulationMonitorService } from "../../services/regulation-monitor.service";
 import { RegulationSourceService } from "../../services/regulation-source.service";
+import { RegulationInsightsService } from "../../services/regulation-insights.service";
+import { RegulationAmendmentImpactService } from "../../services/regulation-amendment-impact.service";
 import { logger } from "../../utils/logger";
 
 type AuthenticatedFastifyInstance = FastifyInstance & {
@@ -524,6 +526,207 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
       const sourceService = new RegulationSourceService(app.db);
       const health = await sourceService.getMojHealthSummary();
       return reply.send({ health });
+    }
+  );
+
+  // GET /api/regulations/ai/health
+  // - Operational health for regulation insights + amendment impact queues.
+  app.get(
+    "/ai/health",
+    {
+      schema: {
+        description: "Get regulation AI queues health summary",
+        tags: ["regulations", "ai"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      if (user.role !== "admin") {
+        return reply.status(403).send({ message: "Admin access required" });
+      }
+
+      const insightsService = new RegulationInsightsService(app.db);
+      const amendmentImpactService = new RegulationAmendmentImpactService(app.db);
+      const [insights, amendmentImpact] = await Promise.all([
+        insightsService.getQueueHealth(),
+        amendmentImpactService.getQueueHealth(),
+      ]);
+
+      return reply.send({
+        insights,
+        amendmentImpact,
+      });
+    }
+  );
+
+  // GET /api/regulations/:id/insights
+  // - Returns AI insights for the latest regulation version.
+  app.get(
+    "/:id/insights",
+    {
+      schema: {
+        description: "Get regulation AI insights for latest version",
+        tags: ["regulations", "ai"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { params } = request as { params: { id: string } };
+      const regulationId = Number.parseInt(params.id, 10);
+
+      if (!Number.isInteger(regulationId) || regulationId <= 0) {
+        return reply.status(400).send({ message: "Invalid regulation id parameter" });
+      }
+
+      const insightsService = new RegulationInsightsService(app.db);
+      const state = await insightsService.getLatestInsights(regulationId, "ar");
+
+      return reply.send(state);
+    }
+  );
+
+  // POST /api/regulations/:id/insights/refresh
+  // - Queue/regenerate latest regulation insights.
+  app.post(
+    "/:id/insights/refresh",
+    {
+      schema: {
+        description: "Queue regulation AI insights refresh for latest version",
+        tags: ["regulations", "ai"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          properties: {
+            force: { type: "boolean" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, params, body } = request as RequestWithUser & {
+        params: { id: string };
+        body: { force?: boolean };
+      };
+
+      const regulationId = Number.parseInt(params.id, 10);
+      if (!Number.isInteger(regulationId) || regulationId <= 0) {
+        return reply.status(400).send({ message: "Invalid regulation id parameter" });
+      }
+
+      const insightsService = new RegulationInsightsService(app.db);
+      const state = await insightsService.enqueueLatestInsightsRefresh({
+        regulationId,
+        triggeredByUserId: user.id,
+        force: Boolean(body?.force),
+        languageCode: "ar",
+      });
+
+      return reply.code(202).send(state);
+    }
+  );
+
+  // GET /api/regulations/:id/amendment-impact?fromVersion=1&toVersion=2
+  // - Returns amendment impact analysis state for selected pair.
+  app.get(
+    "/:id/amendment-impact",
+    {
+      schema: {
+        description: "Get amendment impact analysis for selected regulation versions",
+        tags: ["regulations", "ai"],
+        security: [{ bearerAuth: [] }],
+        querystring: {
+          type: "object",
+          required: ["fromVersion", "toVersion"],
+          properties: {
+            fromVersion: { type: "string" },
+            toVersion: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { params, query } = request as {
+        params: { id: string };
+        query: { fromVersion?: string; toVersion?: string };
+      };
+
+      const regulationId = Number.parseInt(params.id, 10);
+      const fromVersion = Number.parseInt(query.fromVersion || "", 10);
+      const toVersion = Number.parseInt(query.toVersion || "", 10);
+
+      if (!Number.isInteger(regulationId) || regulationId <= 0) {
+        return reply.status(400).send({ message: "Invalid regulation id parameter" });
+      }
+      if (!Number.isInteger(fromVersion) || !Number.isInteger(toVersion)) {
+        return reply
+          .status(400)
+          .send({ message: "fromVersion and toVersion query params are required" });
+      }
+
+      const amendmentImpactService = new RegulationAmendmentImpactService(app.db);
+      const state = await amendmentImpactService.getAmendmentImpact({
+        regulationId,
+        fromVersion,
+        toVersion,
+        languageCode: "ar",
+      });
+
+      return reply.send(state);
+    }
+  );
+
+  // POST /api/regulations/:id/amendment-impact/refresh
+  // - Queue/regenerate amendment impact analysis for selected versions.
+  app.post(
+    "/:id/amendment-impact/refresh",
+    {
+      schema: {
+        description: "Queue amendment impact analysis refresh for selected versions",
+        tags: ["regulations", "ai"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          required: ["fromVersion", "toVersion"],
+          properties: {
+            fromVersion: { type: "number" },
+            toVersion: { type: "number" },
+            force: { type: "boolean" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, params, body } = request as RequestWithUser & {
+        params: { id: string };
+        body: { fromVersion: number; toVersion: number; force?: boolean };
+      };
+
+      const regulationId = Number.parseInt(params.id, 10);
+      if (!Number.isInteger(regulationId) || regulationId <= 0) {
+        return reply.status(400).send({ message: "Invalid regulation id parameter" });
+      }
+
+      if (
+        !Number.isInteger(body.fromVersion) ||
+        !Number.isInteger(body.toVersion)
+      ) {
+        return reply.status(400).send({
+          message: "fromVersion and toVersion body fields are required",
+        });
+      }
+
+      const amendmentImpactService = new RegulationAmendmentImpactService(app.db);
+      const state = await amendmentImpactService.enqueueAmendmentImpactRefresh({
+        regulationId,
+        fromVersion: body.fromVersion,
+        toVersion: body.toVersion,
+        triggeredByUserId: user.id,
+        force: Boolean(body.force),
+        languageCode: "ar",
+      });
+
+      return reply.code(202).send(state);
     }
   );
 

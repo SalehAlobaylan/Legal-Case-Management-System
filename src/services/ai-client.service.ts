@@ -112,6 +112,66 @@ export interface DocumentCaseInsightsResponse {
   error_code?: string | null;
 }
 
+export interface RegulationInsightBullet {
+  title: string;
+  description: string;
+  severity?: "low" | "medium" | "high";
+}
+
+export interface RegulationKeyDate {
+  label: string;
+  value: string;
+  source?: string | null;
+}
+
+export interface RegulationCitation {
+  snippet: string;
+  section_ref?: string | null;
+  relevance?: number | null;
+}
+
+export interface RegulationSummaryAnalysisInput {
+  regulationText: string;
+  regulationTitle: string;
+  sourceMetadata?: Record<string, unknown>;
+  languageCode?: "ar" | "en";
+  maxSourceChars?: number;
+}
+
+export interface RegulationSummaryAnalysisResponse {
+  status: "ok" | "error";
+  summary: string;
+  obligations: RegulationInsightBullet[];
+  risk_flags: RegulationInsightBullet[];
+  key_dates: RegulationKeyDate[];
+  citations: RegulationCitation[];
+  method: string;
+  warnings?: string[];
+  error_code?: string | null;
+}
+
+export interface RegulationAmendmentImpactInput {
+  regulationTitle?: string;
+  oldText: string;
+  newText: string;
+  fromVersionLabel: string;
+  toVersionLabel: string;
+  diffSummary?: Record<string, unknown>;
+  languageCode?: "ar" | "en";
+  maxSourceChars?: number;
+}
+
+export interface RegulationAmendmentImpactResponse {
+  status: "ok" | "error";
+  what_changed: RegulationInsightBullet[];
+  legal_impact: RegulationInsightBullet[];
+  affected_parties: RegulationInsightBullet[];
+  citations: RegulationCitation[];
+  method: string;
+  warnings?: string[];
+  error_code?: string | null;
+}
+
 /**
  * AIClientService
  *
@@ -339,6 +399,79 @@ export class AIClientService {
     }
   }
 
+  async generateRegulationSummaryAnalysis(
+    input: RegulationSummaryAnalysisInput
+  ): Promise<RegulationSummaryAnalysisResponse> {
+    try {
+      const response = await fetch(`${this.baseUrl}/regulations/summary-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          regulation_text: input.regulationText,
+          regulation_title: input.regulationTitle,
+          source_metadata: input.sourceMetadata || {},
+          language_code: input.languageCode || "ar",
+          max_source_chars: input.maxSourceChars,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `AI service error (regulations/summary-analysis): ${response.status} ${errorText}`
+        );
+      }
+
+      return (await response.json()) as RegulationSummaryAnalysisResponse;
+    } catch (error) {
+      logger.error(
+        { err: error, regulationTitle: input.regulationTitle },
+        "Failed to generate regulation summary analysis from AI service"
+      );
+      throw error;
+    }
+  }
+
+  async generateRegulationAmendmentImpact(
+    input: RegulationAmendmentImpactInput
+  ): Promise<RegulationAmendmentImpactResponse> {
+    try {
+      const response = await fetch(`${this.baseUrl}/regulations/amendment-impact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          regulation_title: input.regulationTitle || "",
+          old_text: input.oldText,
+          new_text: input.newText,
+          from_version_label: input.fromVersionLabel,
+          to_version_label: input.toVersionLabel,
+          diff_summary: input.diffSummary || {},
+          language_code: input.languageCode || "ar",
+          max_source_chars: input.maxSourceChars,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `AI service error (regulations/amendment-impact): ${response.status} ${errorText}`
+        );
+      }
+
+      return (await response.json()) as RegulationAmendmentImpactResponse;
+    } catch (error) {
+      logger.error(
+        {
+          err: error,
+          fromVersionLabel: input.fromVersionLabel,
+          toVersionLabel: input.toVersionLabel,
+        },
+        "Failed to generate regulation amendment impact from AI service"
+      );
+      throw error;
+    }
+  }
+
   /**
    * chat
    *
@@ -474,7 +607,6 @@ export interface DocumentSummaryResponse {
     description: string;
   }[];
 }
-
 
 
 

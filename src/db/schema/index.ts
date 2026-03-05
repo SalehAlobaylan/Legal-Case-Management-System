@@ -4,6 +4,8 @@ export * from "./users";
 export * from "./cases";
 export * from "./regulations";
 export * from "./regulation-versions";
+export * from "./regulation-insights";
+export * from "./regulation-amendment-impacts";
 export * from "./regulation-subscriptions";
 export * from "./regulation-monitor-runs";
 export * from "./case-regulation-links";

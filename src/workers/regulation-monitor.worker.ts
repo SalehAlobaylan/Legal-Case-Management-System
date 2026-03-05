@@ -4,6 +4,8 @@ import { logger } from "../utils/logger";
 import { RegulationMonitorService } from "../services/regulation-monitor.service";
 import { DocumentExtractionService } from "../services/document-extraction.service";
 import { RegulationSourceService } from "../services/regulation-source.service";
+import { RegulationInsightsService } from "../services/regulation-insights.service";
+import { RegulationAmendmentImpactService } from "../services/regulation-amendment-impact.service";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -18,6 +20,8 @@ async function main() {
   const monitorService = new RegulationMonitorService(db);
   const sourceService = new RegulationSourceService(db);
   const documentExtractionService = new DocumentExtractionService(db);
+  const regulationInsightsService = new RegulationInsightsService(db);
+  const amendmentImpactService = new RegulationAmendmentImpactService(db);
   let lastSourceSyncAt = 0;
   logger.info(
     {
@@ -33,6 +37,12 @@ async function main() {
       docInsightsEnabled: env.CASE_DOC_INSIGHTS_ENABLED,
       docInsightsBatchSize: env.CASE_DOC_INSIGHTS_BATCH_SIZE,
       docInsightsConcurrency: env.CASE_DOC_INSIGHTS_MAX_CONCURRENCY,
+      regInsightsEnabled: env.REG_INSIGHTS_ENABLED,
+      regInsightsBatchSize: env.REG_INSIGHTS_BATCH_SIZE,
+      regInsightsConcurrency: env.REG_INSIGHTS_MAX_CONCURRENCY,
+      regImpactEnabled: env.REG_IMPACT_ENABLED,
+      regImpactBatchSize: env.REG_IMPACT_BATCH_SIZE,
+      regImpactConcurrency: env.REG_IMPACT_MAX_CONCURRENCY,
     },
     "Regulation monitor worker started"
   );
@@ -68,6 +78,23 @@ async function main() {
       const insightsResult = await documentExtractionService.runPendingInsights();
       if (insightsResult.processed > 0) {
         logger.info(insightsResult, "Case document insights cycle completed");
+      }
+      const regulationInsightsResult =
+        await regulationInsightsService.runPendingRegulationInsights();
+      if (regulationInsightsResult.processed > 0) {
+        logger.info(
+          regulationInsightsResult,
+          "Regulation AI insights cycle completed"
+        );
+      }
+
+      const amendmentImpactResult =
+        await amendmentImpactService.runPendingRegulationAmendmentImpacts();
+      if (amendmentImpactResult.processed > 0) {
+        logger.info(
+          amendmentImpactResult,
+          "Regulation amendment impact cycle completed"
+        );
       }
     } catch (error) {
       logger.error({ err: error }, "Unhandled error during regulation monitor cycle");
