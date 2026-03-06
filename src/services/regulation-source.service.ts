@@ -8,6 +8,7 @@ import {
 } from "../db/schema";
 import { env } from "../config/env";
 import { AIClientService } from "./ai-client.service";
+import { RegulationRagService } from "./regulation-rag.service";
 import { logger } from "../utils/logger";
 
 type RegulationCategory =
@@ -158,9 +159,13 @@ const DEFAULT_LISTING_URL =
 
 export class RegulationSourceService {
   private readonly aiClient: AIClientService | null;
+  private readonly regulationRagService: RegulationRagService | null;
 
   constructor(private readonly db: Database) {
     this.aiClient = env.AI_SERVICE_URL ? new AIClientService() : null;
+    this.regulationRagService = env.AI_SERVICE_URL
+      ? new RegulationRagService(this.db, this.aiClient || undefined)
+      : null;
   }
 
   private normalizeWhitespace(text: string): string {
@@ -1867,28 +1872,52 @@ export class RegulationSourceService {
       changesSummary = "Detected source metadata change from MOJ listing sync.";
     }
 
-    await this.db.insert(regulationVersions).values({
-      regulationId,
-      versionNumber: nextVersionNumber,
-      content: selectedText,
-      contentHash: selectedHash,
-      rawHtml: selectedRawHtml || null,
-      sourceMetadata: candidate.sourceMetadata,
-      sourceMetadataHash,
-      extractionMetadata: {
-        sourceProvider: candidate.sourceProvider,
-        sourceSerial: candidate.sourceSerial || null,
-        selectedSourceUrl,
-        extractionMethod,
-        extractionStatus,
-        fallbackUsed,
-        attempts: extractionAttempts,
-        fallbackSummaryChars: candidate.summary?.length || 0,
-        generatedAt: now.toISOString(),
-      },
-      changesSummary,
-      createdBy: "moj_source_sync",
-    });
+    const [createdVersion] = await this.db
+      .insert(regulationVersions)
+      .values({
+        regulationId,
+        versionNumber: nextVersionNumber,
+        content: selectedText,
+        contentHash: selectedHash,
+        rawHtml: selectedRawHtml || null,
+        sourceMetadata: candidate.sourceMetadata,
+        sourceMetadataHash,
+        extractionMetadata: {
+          sourceProvider: candidate.sourceProvider,
+          sourceSerial: candidate.sourceSerial || null,
+          selectedSourceUrl,
+          extractionMethod,
+          extractionStatus,
+          fallbackUsed,
+          attempts: extractionAttempts,
+          fallbackSummaryChars: candidate.summary?.length || 0,
+          generatedAt: now.toISOString(),
+        },
+        changesSummary,
+        createdBy: "moj_source_sync",
+      })
+      .returning({
+        id: regulationVersions.id,
+      });
+
+    if (this.regulationRagService) {
+      try {
+        await this.regulationRagService.reindexRegulationVersionChunks({
+          regulationId,
+          regulationVersionId: createdVersion.id,
+          sourceText: selectedText,
+        });
+      } catch (error) {
+        logger.error(
+          {
+            err: error,
+            regulationId,
+            regulationVersionId: createdVersion.id,
+          },
+          "Failed to reindex regulation chunks after version sync"
+        );
+      }
+    }
 
     const nextStatus = candidate.status || (latestVersion ? "amended" : "active");
     await this.db

@@ -58,6 +58,23 @@ const envSchema = z.object({
   CASE_LINK_DOC_MAX_INCLUDED: z.coerce.number().int().min(0).max(50).default(5),
   CASE_LINK_DOC_MAX_CHARS_PER_DOC: z.coerce.number().int().min(200).default(4000),
   CASE_LINK_DOC_TOTAL_MAX_CHARS: z.coerce.number().int().min(500).default(12000),
+  CASE_LINK_TOP_K_FINAL: z.coerce.number().int().min(1).max(20).default(5),
+  CASE_LINK_SUPPORT_FLOOR: z.coerce.number().min(0).max(1).default(0.3),
+  CASE_LINK_STRICT_MODE: z.coerce.boolean().default(true),
+  CASE_LINK_WEIGHT_SEMANTIC: z.coerce.number().min(0).max(1).default(0.55),
+  CASE_LINK_WEIGHT_SUPPORT: z.coerce.number().min(0).max(1).default(0.2),
+  CASE_LINK_WEIGHT_LEXICAL: z.coerce.number().min(0).max(1).default(0.15),
+  CASE_LINK_WEIGHT_CATEGORY: z.coerce.number().min(0).max(1).default(0.1),
+  CASE_LINK_MIN_FINAL_SCORE: z.coerce.number().min(0).max(1).default(0.45),
+  CASE_LINK_MIN_SUPPORTING_MATCHES: z.coerce.number().int().min(1).max(10).default(1),
+  CASE_LINK_MIN_PAIR_SCORE: z.coerce.number().min(0).max(1).default(0.40),
+  CASE_LINK_REQUIRE_CASE_SUPPORT: z.coerce.boolean().default(true),
+  REG_LINK_PREFILTER_TOP_K: z.coerce.number().int().min(10).max(1000).default(250),
+  REG_LINK_CANDIDATE_CHUNKS_PER_REG: z.coerce.number().int().min(1).max(10).default(4),
+  REG_LINK_CHUNK_CHARS: z.coerce.number().int().min(200).default(1200),
+  REG_LINK_MAX_CHUNKS: z.coerce.number().int().min(1).max(5000).default(400),
+
+  AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(60000),
 
   CORS_ORIGIN: z.string().default("*"),
 

@@ -44,6 +44,7 @@ export function buildApp(opts = {}) {
   app.register(cors, {
     origin: env.CORS_ORIGIN.split(","),
     credentials: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
   app.register(rateLimit, {
     max: env.RATE_LIMIT_MAX,

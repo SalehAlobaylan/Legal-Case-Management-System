@@ -145,6 +145,15 @@ export class DocumentExtractionService {
     );
   }
 
+  /**
+   * Strip null bytes (\x00) that would cause PostgreSQL
+   * "invalid byte sequence for encoding UTF8: 0x00" errors.
+   */
+  private sanitizeForPostgres(value: string): string {
+    // eslint-disable-next-line no-control-regex
+    return value.replace(/\x00/g, "");
+  }
+
   private hashText(value: string): string {
     return createHash("sha256").update(value).digest("hex");
   }
@@ -369,7 +378,8 @@ export class DocumentExtractionService {
 
   private async upsertQueuedExtraction(
     document: CaseDocumentRecord,
-    orgId: number
+    orgId: number,
+    options?: { force?: boolean }
   ): Promise<{ queued: boolean }> {
     let fileHash: string | null = null;
     const resolvedFilePath = this.resolveDocumentPath(document.filePath);
@@ -387,7 +397,10 @@ export class DocumentExtractionService {
       },
     });
 
+    // Skip re-queue if file is unchanged and already extracted — unless force=true
+    // (force is used when re-extracting after an extraction logic fix, e.g. RTL/bidi)
     if (
+      !options?.force &&
       existing &&
       existing.fileHash &&
       existing.fileHash === fileHash &&
@@ -483,7 +496,11 @@ export class DocumentExtractionService {
     };
   }
 
-  async enqueueSingleDocument(documentId: number, orgId: number): Promise<void> {
+  async enqueueSingleDocument(
+    documentId: number,
+    orgId: number,
+    options?: { force?: boolean }
+  ): Promise<void> {
     const document = await this.db.query.documents.findFirst({
       where: eq(documents.id, documentId),
       columns: {
@@ -519,7 +536,8 @@ export class DocumentExtractionService {
         mimeType: document.mimeType,
         caseId: document.caseId,
       },
-      orgId
+      orgId,
+      options
     );
   }
 
@@ -896,6 +914,10 @@ export class DocumentExtractionService {
       : null;
 
     if (!document || !resolvedFilePath) {
+      logger.warn(
+        { documentId: row.documentId, document: document ? { id: document.id, filePath: document.filePath } : null, resolvedFilePath },
+        "processSingleExtraction: file_missing — document or resolvedFilePath is null"
+      );
       await this.db
         .update(documentExtractions)
         .set({
@@ -940,7 +962,9 @@ export class DocumentExtractionService {
 
       if (extraction.status === "ok") {
         const extractionWarnings = extraction.warnings || [];
-        const extractedText = (extraction.extracted_text || "").trim();
+        const extractedText = this.sanitizeForPostgres(
+          (extraction.extracted_text || "").trim()
+        );
         const ragWarnings: string[] = [];
 
         try {

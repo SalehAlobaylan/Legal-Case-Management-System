@@ -6,6 +6,8 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 - Added MOJ source sync endpoints and worker-integrated ingestion cycle.
 - Added regulation version compare API for frontend side-by-side diff rendering.
 - Upgraded regulations list sorting to latest-updated and included version counts in list payloads.
+- Added explainable AI case-linking with line-level regulation evidence and score breakdown metadata.
+- Added regulation-version chunk indexing + semantic candidate prefiltering for higher precision linking.
 
 ### Features
 - Authentication (JWT)
@@ -13,6 +15,7 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 - Regulation management
 - RAG Phase 1 document chunk storage with pgvector
 - AI-powered case–regulation linking
+- Explainable case-linking evidence (`line_matches`, `evidence`, `score_breakdown`, `warnings`)
 - Regulation subscription APIs (single + bulk subscribe)
 - Dedicated regulation monitoring worker runtime
 - Hash-based regulation versioning with automatic notification fanout
@@ -22,6 +25,7 @@ A simple backend API for managing legal cases and regulations. Built with Fastif
 - Async case-document extraction queue with OCR-backed text extraction
 - Case-focused document insights lifecycle (summary + highlights) with worker processing
 - Insights stale-mark/recompute on case title/description updates
+- Automatic regulation re-chunking when new versions are materialized
 - Global error handler
 - OpenAPI/Swagger docs at `/docs`
 - PostgreSQL + Drizzle ORM
@@ -35,6 +39,10 @@ npm run build && npm run start:prod
 ```
 
 Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before starting.
+
+### Operational Commands
+- `npm run worker:reg-monitor`: runs monitor/sync/extraction background loops.
+- `npm run backfill:reg-chunks`: backfills semantic regulation chunks/embeddings for existing regulation versions.
 
 ### Project layout
 - `src/`: backend source code (plugins, routes, services, db, utils)
@@ -69,7 +77,16 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `CASE_DOC_EXTRACTION_*`: document extraction queue controls
 - `CASE_DOC_INSIGHTS_*`: document insights queue controls
 - `CASE_LINK_DOC_*`: limits for document context used in AI case linking
-- PostgreSQL `vector` extension is required for `document_chunks` migrations (`CREATE EXTENSION IF NOT EXISTS vector;`)
+- `CASE_LINK_TOP_K_FINAL`: final number of AI links to keep per generation
+- `CASE_LINK_STRICT_MODE`: enables strict quality filtering gates
+- `CASE_LINK_MIN_FINAL_SCORE`: minimum final confidence score in strict mode
+- `CASE_LINK_MIN_SUPPORTING_MATCHES`: minimum supporting fragment/chunk matches
+- `CASE_LINK_MIN_PAIR_SCORE`: minimum pair score accepted in evidence matching
+- `REG_LINK_PREFILTER_TOP_K`: number of regulation candidates kept after prefilter
+- `REG_LINK_CANDIDATE_CHUNKS_PER_REG`: max semantic chunks per regulation sent to AI
+- `REG_LINK_CHUNK_CHARS`: target characters per regulation chunk
+- `REG_LINK_MAX_CHUNKS`: hard cap for chunk count generated per regulation version
+- PostgreSQL `vector` extension is required for `document_chunks` and `regulation_chunks` (`CREATE EXTENSION IF NOT EXISTS vector;`)
 
 ### API overview (brief)
 - `GET /health` — health check

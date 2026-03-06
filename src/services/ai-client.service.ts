@@ -9,17 +9,23 @@ export interface EmbeddingResponse {
 
 export interface SimilarityMatch {
   regulation_id: number;
+  matched_regulation_version_id?: number | null;
   similarity_score: number;
   title: string;
   category?: string | null;
   evidence?: SimilarityEvidence[];
+  line_matches?: SimilarityLineMatch[];
+  score_breakdown?: SimilarityScoreBreakdown;
+  warnings?: string[];
 }
 
 export interface SimilarityRegulationCandidate {
   id: number;
   title: string;
   category?: string | null;
+  regulation_version_id?: number | null;
   content_text?: string | null;
+  candidate_chunks?: SimilarityRegulationChunkCandidate[];
 }
 
 export interface SimilarityCaseFragment {
@@ -30,12 +36,64 @@ export interface SimilarityCaseFragment {
   document_name?: string;
 }
 
+export interface SimilarityCaseProfile {
+  case_id?: number;
+  title?: string;
+  description?: string | null;
+  case_type?: string;
+  status?: string;
+  court_jurisdiction?: string | null;
+  client_info?: string | null;
+}
+
+export interface SimilarityRegulationChunkCandidate {
+  chunk_id: number;
+  chunk_index: number;
+  line_start?: number | null;
+  line_end?: number | null;
+  article_ref?: string | null;
+  text: string;
+}
+
 export interface SimilarityEvidence {
   fragment_id: string;
   source: string;
   document_id?: number | null;
   document_name?: string | null;
   score: number;
+}
+
+export interface SimilarityScoreBreakdown {
+  semantic_max: number;
+  support_coverage: number;
+  lexical_overlap: number;
+  category_prior: number;
+  final_score: number;
+  has_case_support?: boolean;
+  strong_support_count?: number;
+}
+
+export interface SimilarityScoringProfile {
+  semantic_weight?: number;
+  support_weight?: number;
+  lexical_weight?: number;
+  category_weight?: number;
+  strict_min_final_score?: number;
+  strict_min_pair_score?: number;
+  strict_min_supporting_matches?: number;
+  require_case_support?: boolean;
+}
+
+export interface SimilarityLineMatch {
+  case_fragment_id: string;
+  case_snippet: string;
+  regulation_chunk_id?: number | null;
+  regulation_snippet: string;
+  line_start?: number | null;
+  line_end?: number | null;
+  article_ref?: string | null;
+  pair_score: number;
+  contribution: number;
 }
 
 export interface FindRelatedResponse {
@@ -181,6 +239,7 @@ export interface RegulationAmendmentImpactResponse {
  */
 export class AIClientService {
   private readonly baseUrl: string;
+  private readonly timeoutMs: number;
 
   constructor() {
     if (!env.AI_SERVICE_URL) {
@@ -191,6 +250,12 @@ export class AIClientService {
 
     // Normalise to avoid double slashes when building URLs.
     this.baseUrl = env.AI_SERVICE_URL.replace(/\/+$/, "");
+    this.timeoutMs = env.AI_SERVICE_TIMEOUT_MS;
+  }
+
+  /** Create an AbortSignal that times out after the configured duration. */
+  private signal(): AbortSignal {
+    return AbortSignal.timeout(this.timeoutMs);
   }
 
   /**
@@ -208,6 +273,7 @@ export class AIClientService {
           texts,
           normalize: true,
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -261,11 +327,18 @@ export class AIClientService {
   async findRelatedRegulations(
     caseText: string,
     regulations: SimilarityRegulationCandidate[],
-    topK: number = 10,
-    threshold: number = 0.3,
-    caseFragments?: SimilarityCaseFragment[]
+    options?: {
+      topK?: number;
+      threshold?: number;
+      caseFragments?: SimilarityCaseFragment[];
+      caseProfile?: SimilarityCaseProfile;
+      strictMode?: boolean;
+      scoringProfile?: SimilarityScoringProfile;
+    }
   ): Promise<SimilarityMatch[]> {
     try {
+      const topK = options?.topK ?? 10;
+      const threshold = options?.threshold ?? 0.3;
       const response = await fetch(`${this.baseUrl}/similarity/find-related`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -274,8 +347,14 @@ export class AIClientService {
           regulations,
           top_k: topK,
           threshold,
-          case_fragments: caseFragments?.length ? caseFragments : undefined,
+          case_fragments:
+            options?.caseFragments?.length ? options.caseFragments : undefined,
+          case_profile: options?.caseProfile,
+          strict_mode:
+            typeof options?.strictMode === "boolean" ? options.strictMode : true,
+          scoring_profile: options?.scoringProfile,
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -309,6 +388,7 @@ export class AIClientService {
           if_modified_since: input.ifModifiedSince || undefined,
           max_chars: input.maxChars,
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -344,6 +424,7 @@ export class AIClientService {
       const response = await fetch(`${this.baseUrl}/documents/extract`, {
         method: "POST",
         body: formData,
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -377,6 +458,7 @@ export class AIClientService {
           top_k: input.topK,
           max_source_chars: input.maxSourceChars,
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -413,6 +495,7 @@ export class AIClientService {
           language_code: input.languageCode || "ar",
           max_source_chars: input.maxSourceChars,
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -449,6 +532,7 @@ export class AIClientService {
           language_code: input.languageCode || "ar",
           max_source_chars: input.maxSourceChars,
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -493,6 +577,7 @@ export class AIClientService {
           context: context || {},
           history: history || [],
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -531,6 +616,7 @@ export class AIClientService {
           status: caseData.status,
           court_jurisdiction: caseData.courtJurisdiction || "",
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -563,6 +649,7 @@ export class AIClientService {
           content: documentContent,
           file_name: fileName,
         }),
+        signal: this.signal(),
       });
 
       if (!response.ok) {
@@ -607,11 +694,6 @@ export interface DocumentSummaryResponse {
     description: string;
   }[];
 }
-
-
-
-
-
 
 
 

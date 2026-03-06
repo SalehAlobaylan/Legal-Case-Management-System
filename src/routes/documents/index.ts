@@ -147,6 +147,43 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: "No file uploaded" });
       }
 
+      // Server-side file type validation
+      const allowedMimeTypes = new Set([
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "text/plain",
+        "text/csv",
+        "text/tab-separated-values",
+        "text/markdown",
+        "text/html",
+        "application/rtf",
+        "text/rtf",
+        "image/jpeg",
+        "image/png",
+        "application/octet-stream", // browsers send this for unknown extensions
+      ]);
+      const allowedExtensions = new Set([
+        ".pdf", ".docx",
+        ".xlsx", ".xls",
+        ".csv", ".tsv", ".dsv",
+        ".txt", ".md", ".markdown",
+        ".rtf",
+        ".html", ".htm",
+        ".jpg", ".jpeg", ".png",
+      ]);
+
+      const fileExt = path.extname(data.filename).toLowerCase();
+      const mimeOk = allowedMimeTypes.has(data.mimetype);
+      const extOk = allowedExtensions.has(fileExt);
+
+      if (!mimeOk && !extOk) {
+        return reply.status(415).send({
+          message: `Unsupported file type "${fileExt}" (${data.mimetype}). Allowed: ${[...allowedExtensions].join(", ")}`,
+        });
+      }
+
       // Generate unique filename
       const ext = path.extname(data.filename);
       const uniqueName = `${randomUUID()}${ext}`;
@@ -474,6 +511,54 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(202).send({
         documentId: docId,
         ...insights,
+      });
+    }
+  );
+
+  /**
+   * POST /api/documents/:id/extraction/refresh
+   *
+   * - Re-queues the document for full text extraction.
+   * - Resets the extraction row to pending so the worker re-calls the AI
+   *   microservice, replacing any existing extracted_text and chunks.
+   * - Use this after fixing extraction logic (e.g. RTL/Arabic bidi fix) to
+   *   re-process documents that were extracted before the fix.
+   */
+  fastify.post(
+    "/:id/extraction/refresh",
+    {
+      schema: {
+        description: "Re-queue document for full text re-extraction",
+        tags: ["documents", "ai"],
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { id } = request.params as { id: string };
+      const docId = parseInt(id, 10);
+
+      if (isNaN(docId)) {
+        return reply.status(400).send({ message: "Invalid document ID" });
+      }
+
+      const extractionService = new DocumentExtractionService(app.db);
+      await extractionService.enqueueSingleDocument(docId, user.orgId, { force: true });
+      const status = await extractionService.getExtractionStatusByDocumentId(
+        docId,
+        user.orgId
+      );
+
+      return reply.code(202).send({
+        documentId: docId,
+        message: "Document queued for re-extraction",
+        ...status,
       });
     }
   );

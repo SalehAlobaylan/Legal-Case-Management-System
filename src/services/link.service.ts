@@ -28,6 +28,12 @@ export class LinkService {
     if (typeof data.evidenceSources !== "undefined") {
       updateSet.evidenceSources = data.evidenceSources;
     }
+    if (typeof data.matchedRegulationVersionId !== "undefined") {
+      updateSet.matchedRegulationVersionId = data.matchedRegulationVersionId;
+    }
+    if (typeof data.matchExplanation !== "undefined") {
+      updateSet.matchExplanation = data.matchExplanation;
+    }
     if (typeof data.matchedWithDocuments !== "undefined") {
       updateSet.matchedWithDocuments = data.matchedWithDocuments;
     }

@@ -10,10 +10,12 @@ import {
   uniqueIndex,
   index,
   uuid,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { cases } from "./cases";
 import { regulations } from "./regulations";
+import { regulationVersions } from "./regulation-versions";
 import { users } from "./users";
 
 export const linkMethodEnum = ["ai", "manual", "hybrid"] as const;
@@ -28,6 +30,10 @@ export const caseRegulationLinks = pgTable(
     regulationId: integer("regulation_id")
       .references(() => regulations.id, { onDelete: "cascade" })
       .notNull(),
+    matchedRegulationVersionId: integer("matched_regulation_version_id").references(
+      () => regulationVersions.id,
+      { onDelete: "set null" }
+    ),
     similarityScore: decimal("similarity_score", { precision: 5, scale: 4 }),
     method: varchar("method", { length: 20 })
       .$type<(typeof linkMethodEnum)[number]>()
@@ -39,6 +45,10 @@ export const caseRegulationLinks = pgTable(
     }),
     verifiedAt: timestamp("verified_at"),
     evidenceSources: text("evidence_sources").default("[]").notNull(),
+    matchExplanation: jsonb("match_explanation")
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
     matchedWithDocuments: boolean("matched_with_documents")
       .default(false)
       .notNull(),
@@ -67,6 +77,10 @@ export const caseRegulationLinksRelations = relations(
       fields: [caseRegulationLinks.regulationId],
       references: [regulations.id],
     }),
+    matchedRegulationVersion: one(regulationVersions, {
+      fields: [caseRegulationLinks.matchedRegulationVersionId],
+      references: [regulationVersions.id],
+    }),
     verifier: one(users, {
       fields: [caseRegulationLinks.verifiedBy],
       references: [users.id],
@@ -77,4 +91,3 @@ export const caseRegulationLinksRelations = relations(
 export type CaseRegulationLink = typeof caseRegulationLinks.$inferSelect;
 export type NewCaseRegulationLink = typeof caseRegulationLinks.$inferInsert;
 export type LinkMethod = (typeof linkMethodEnum)[number];
-
