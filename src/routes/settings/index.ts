@@ -15,6 +15,7 @@ import {
 } from "fastify";
 import { db } from "../../db/connection";
 import { organizations } from "../../db/schema/organizations";
+import { aiSettings } from "../../db/schema/ai-settings";
 import { type UserRole } from "../../db/schema/users";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -76,6 +77,25 @@ const changePasswordSchema = z.object({
 }).refine((data) => data.newPassword === data.confirmPassword, {
     message: "Passwords do not match",
     path: ["confirmPassword"],
+});
+
+const aiSettingsSchema = z.object({
+    llmVerificationEnabled: z.boolean().optional(),
+    crossEncoderEnabled: z.boolean().optional(),
+    hydeEnabled: z.boolean().optional(),
+    colbertEnabled: z.boolean().optional(),
+    agenticRetrievalEnabled: z.boolean().optional(),
+    semanticWeight: z.number().min(0).max(1).optional(),
+    supportWeight: z.number().min(0).max(1).optional(),
+    lexicalWeight: z.number().min(0).max(1).optional(),
+    categoryWeight: z.number().min(0).max(1).optional(),
+    minFinalScore: z.number().min(0).max(1).optional(),
+    minPairScore: z.number().min(0).max(1).optional(),
+    geminiModel: z.string().min(1).max(100).optional(),
+    crossEncoderTopN: z.number().int().min(1).max(100).optional(),
+    colbertTopN: z.number().int().min(1).max(100).optional(),
+    geminiTopNCandidates: z.number().int().min(1).max(100).optional(),
+    agenticMaxRounds: z.number().int().min(1).max(10).optional(),
 });
 
 const settingsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -567,6 +587,190 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
             const activity = await securityService.getLoginActivity(user.id, limit);
 
             return reply.send({ activity });
+        }
+    );
+
+    // ======================================================================
+    // AI SETTINGS (admin only)
+    // ======================================================================
+
+    /**
+     * GET /api/settings/ai
+     *
+     * - Returns AI pipeline settings for the current user's organization.
+     * - Admin only.
+     */
+    fastify.get(
+        "/ai",
+        {
+            schema: {
+                description: "Get AI pipeline settings",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const [row] = await db
+                .select()
+                .from(aiSettings)
+                .where(eq(aiSettings.organizationId, user.orgId))
+                .limit(1);
+
+            if (!row) {
+                // Return defaults — no row means org hasn't customized yet
+                return reply.send({
+                    llmVerificationEnabled: false,
+                    crossEncoderEnabled: false,
+                    hydeEnabled: false,
+                    colbertEnabled: false,
+                    agenticRetrievalEnabled: false,
+                    semanticWeight: 0.55,
+                    supportWeight: 0.20,
+                    lexicalWeight: 0.15,
+                    categoryWeight: 0.10,
+                    minFinalScore: 0.45,
+                    minPairScore: 0.40,
+                    geminiModel: "gemini-2.0-flash",
+                    crossEncoderTopN: 15,
+                    colbertTopN: 15,
+                    geminiTopNCandidates: 15,
+                    agenticMaxRounds: 2,
+                });
+            }
+
+            return reply.send({
+                llmVerificationEnabled: row.llmVerificationEnabled,
+                crossEncoderEnabled: row.crossEncoderEnabled,
+                hydeEnabled: row.hydeEnabled,
+                colbertEnabled: row.colbertEnabled,
+                agenticRetrievalEnabled: row.agenticRetrievalEnabled,
+                semanticWeight: row.semanticWeight,
+                supportWeight: row.supportWeight,
+                lexicalWeight: row.lexicalWeight,
+                categoryWeight: row.categoryWeight,
+                minFinalScore: row.minFinalScore,
+                minPairScore: row.minPairScore,
+                geminiModel: row.geminiModel,
+                crossEncoderTopN: row.crossEncoderTopN,
+                colbertTopN: row.colbertTopN,
+                geminiTopNCandidates: row.geminiTopNCandidates,
+                agenticMaxRounds: row.agenticMaxRounds,
+            });
+        }
+    );
+
+    /**
+     * PUT /api/settings/ai
+     *
+     * - Updates AI pipeline settings for the current user's organization.
+     * - Admin only.
+     * - Creates the row on first save (upsert pattern).
+     */
+    fastify.put(
+        "/ai",
+        {
+            schema: {
+                description: "Update AI pipeline settings",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const body = aiSettingsSchema.parse(request.body);
+
+            // Build the update payload (only fields that were provided)
+            const updateData: Record<string, unknown> = {
+                updatedAt: new Date(),
+            };
+            if (body.llmVerificationEnabled !== undefined)
+                updateData.llmVerificationEnabled = body.llmVerificationEnabled;
+            if (body.crossEncoderEnabled !== undefined)
+                updateData.crossEncoderEnabled = body.crossEncoderEnabled;
+            if (body.hydeEnabled !== undefined)
+                updateData.hydeEnabled = body.hydeEnabled;
+            if (body.colbertEnabled !== undefined)
+                updateData.colbertEnabled = body.colbertEnabled;
+            if (body.agenticRetrievalEnabled !== undefined)
+                updateData.agenticRetrievalEnabled = body.agenticRetrievalEnabled;
+            if (body.semanticWeight !== undefined)
+                updateData.semanticWeight = body.semanticWeight;
+            if (body.supportWeight !== undefined)
+                updateData.supportWeight = body.supportWeight;
+            if (body.lexicalWeight !== undefined)
+                updateData.lexicalWeight = body.lexicalWeight;
+            if (body.categoryWeight !== undefined)
+                updateData.categoryWeight = body.categoryWeight;
+            if (body.minFinalScore !== undefined)
+                updateData.minFinalScore = body.minFinalScore;
+            if (body.minPairScore !== undefined)
+                updateData.minPairScore = body.minPairScore;
+            if (body.geminiModel !== undefined)
+                updateData.geminiModel = body.geminiModel;
+            if (body.crossEncoderTopN !== undefined)
+                updateData.crossEncoderTopN = body.crossEncoderTopN;
+            if (body.colbertTopN !== undefined)
+                updateData.colbertTopN = body.colbertTopN;
+            if (body.geminiTopNCandidates !== undefined)
+                updateData.geminiTopNCandidates = body.geminiTopNCandidates;
+            if (body.agenticMaxRounds !== undefined)
+                updateData.agenticMaxRounds = body.agenticMaxRounds;
+
+            // Upsert: try update first, insert if not exists
+            const [existing] = await db
+                .select({ id: aiSettings.id })
+                .from(aiSettings)
+                .where(eq(aiSettings.organizationId, user.orgId))
+                .limit(1);
+
+            if (existing) {
+                await db
+                    .update(aiSettings)
+                    .set(updateData)
+                    .where(eq(aiSettings.organizationId, user.orgId));
+            } else {
+                await db.insert(aiSettings).values({
+                    organizationId: user.orgId,
+                    ...updateData,
+                });
+            }
+
+            // Return the updated settings
+            const [updated] = await db
+                .select()
+                .from(aiSettings)
+                .where(eq(aiSettings.organizationId, user.orgId))
+                .limit(1);
+
+            return reply.send({
+                llmVerificationEnabled: updated.llmVerificationEnabled,
+                crossEncoderEnabled: updated.crossEncoderEnabled,
+                hydeEnabled: updated.hydeEnabled,
+                colbertEnabled: updated.colbertEnabled,
+                agenticRetrievalEnabled: updated.agenticRetrievalEnabled,
+                semanticWeight: updated.semanticWeight,
+                supportWeight: updated.supportWeight,
+                lexicalWeight: updated.lexicalWeight,
+                categoryWeight: updated.categoryWeight,
+                minFinalScore: updated.minFinalScore,
+                minPairScore: updated.minPairScore,
+                geminiModel: updated.geminiModel,
+                crossEncoderTopN: updated.crossEncoderTopN,
+                colbertTopN: updated.colbertTopN,
+                geminiTopNCandidates: updated.geminiTopNCandidates,
+                agenticMaxRounds: updated.agenticMaxRounds,
+            });
         }
     );
 };

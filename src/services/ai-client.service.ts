@@ -334,6 +334,13 @@ export class AIClientService {
       caseProfile?: SimilarityCaseProfile;
       strictMode?: boolean;
       scoringProfile?: SimilarityScoringProfile;
+      pipelineToggles?: {
+        enable_llm_verification?: boolean;
+        enable_cross_encoder?: boolean;
+        enable_hyde?: boolean;
+        enable_colbert?: boolean;
+        enable_agentic?: boolean;
+      };
     }
   ): Promise<SimilarityMatch[]> {
     try {
@@ -353,6 +360,7 @@ export class AIClientService {
           strict_mode:
             typeof options?.strictMode === "boolean" ? options.strictMode : true,
           scoring_profile: options?.scoringProfile,
+          ...(options?.pipelineToggles || {}),
         }),
         signal: this.signal(),
       });

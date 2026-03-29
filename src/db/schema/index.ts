@@ -20,3 +20,4 @@ export * from "./user-achievements";
 export * from "./billing";
 export * from "./notification-preferences";
 export * from "./login-activity";
+export * from "./ai-settings";
