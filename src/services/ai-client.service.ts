@@ -601,6 +601,28 @@ export class AIClientService {
   }
 
   /**
+   * chatStream
+   *
+   * - Sends a chat request to the AI microservice streaming endpoint.
+   * - Returns the raw Response so the caller can pipe the SSE stream.
+   */
+  async chatStream(payload: ChatStreamPayload): Promise<Response> {
+    const response = await fetch(`${this.baseUrl}/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: this.signal(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => response.statusText);
+      throw new Error(`AI service error (chat/stream): ${response.status} ${errorText}`);
+    }
+
+    return response;
+  }
+
+  /**
    * analyzeCase
    *
    * - Generates comprehensive AI analysis of a legal case.
@@ -671,6 +693,47 @@ export class AIClientService {
       throw error;
     }
   }
+}
+
+// Chat stream payload for the SSE endpoint
+export interface ChatStreamPayload {
+  message: string;
+  history?: { role: string; content: string }[];
+  regulation_chunks?: {
+    chunk_id: number;
+    regulation_id: number;
+    regulation_title: string;
+    article_ref?: string | null;
+    content: string;
+    similarity_score?: number | null;
+  }[];
+  document_chunks?: {
+    chunk_id: number;
+    document_id: number;
+    document_name: string;
+    content: string;
+  }[];
+  case_context?: {
+    case_id: number;
+    title: string;
+    case_type?: string | null;
+    description?: string | null;
+  } | null;
+  /** Summary of the organization's cases — lets the assistant answer
+   *  general questions like "how many commercial cases do I have?" */
+  org_cases?: {
+    case_id: number;
+    case_number: string;
+    title: string;
+    case_type: string;
+    status: string;
+    client_info?: string | null;
+    filing_date?: string | null;
+    next_hearing?: string | null;
+  }[];
+  language?: string | null;
+  session_id?: string | null;
+  stream: boolean;
 }
 
 // Response interfaces for new methods

@@ -30,6 +30,7 @@ import usersRoutes from "./routes/users";
 import billingRoutes from "./routes/billing";
 import aiRoutes from "./routes/ai";
 import caseDocumentsRoutes from "./routes/case-documents";
+import searchRoutes from "./routes/search";
 
 export function buildApp(opts = {}) {
   const app = Fastify({
@@ -94,6 +95,7 @@ export function buildApp(opts = {}) {
   app.register(usersRoutes, { prefix: "/api/users/me" });
   app.register(billingRoutes, { prefix: "/api/billing" });
   app.register(aiRoutes, { prefix: "/api/ai" });
+  app.register(searchRoutes, { prefix: "/api/search" });
 
   return app;
 }

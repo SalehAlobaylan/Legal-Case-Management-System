@@ -21,3 +21,4 @@ export * from "./billing";
 export * from "./notification-preferences";
 export * from "./login-activity";
 export * from "./ai-settings";
+export * from "./chat-sessions";
