@@ -134,6 +134,13 @@
       "when": 1775268808762,
       "tag": "0018_bright_changeling",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1775928690834,
+      "tag": "0019_kind_magneto",
+      "breakpoints": true
     }
   ]
 }

@@ -5,10 +5,17 @@
  * - All operations are scoped to the user's organization.
  */
 
-import { eq, and, desc, like } from "drizzle-orm";
+import { eq, and, desc, like, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { clients, type NewClient, cases } from "../db/schema";
+import { 
+  clients, 
+  type NewClient, 
+  cases,
+  clientActivities,
+  clientDocuments,
+  type NewClientActivity
+} from "../db/schema";
 import { NotFoundError, ForbiddenError } from "../utils/errors";
 
 export class ClientService {
@@ -61,6 +68,8 @@ export class ClientService {
     filters?: {
       type?: string;
       status?: string;
+      leadStatus?: string;
+      tag?: string;
     }
   ) {
     const conditions: SQL<unknown>[] = [eq(clients.organizationId, orgId)];
@@ -70,6 +79,13 @@ export class ClientService {
     }
     if (filters?.status) {
       conditions.push(eq(clients.status, filters.status as any));
+    }
+    if (filters?.leadStatus) {
+      conditions.push(eq(clients.leadStatus, filters.leadStatus as any));
+    }
+    if (filters?.tag) {
+      // Using JSONB inclusion operator to check if tags array contains the tag
+      conditions.push(sql`${clients.tags} @> ${JSON.stringify([filters.tag])}`);
     }
 
     return this.db.query.clients.findMany({
@@ -135,5 +151,65 @@ export class ClientService {
     });
 
     return clientCases;
+  }
+
+  /**
+   * getClientActivities
+   *
+   * - Returns all timeline activities associated with a client.
+   */
+  async getClientActivities(clientId: number, orgId: number) {
+    // Verify ownership
+    await this.getClientById(clientId, orgId);
+
+    return this.db.query.clientActivities.findMany({
+      where: eq(clientActivities.clientId, clientId),
+      orderBy: [desc(clientActivities.createdAt)],
+      with: {
+        user: {
+          columns: { id: true, fullName: true, avatarUrl: true }
+        }
+      }
+    });
+  }
+
+  /**
+   * createClientActivity
+   *
+   * - Creates a new timeline activity.
+   */
+  async createClientActivity(clientId: number, orgId: number, data: Omit<NewClientActivity, "clientId">) {
+    // Verify ownership
+    await this.getClientById(clientId, orgId);
+
+    const [activity] = await this.db
+      .insert(clientActivities)
+      .values({
+        ...data,
+        clientId,
+      })
+      .returning();
+
+    return activity;
+  }
+
+  /**
+   * getClientDocuments
+   *
+   * - Returns all general KYC/evidence documents for a client.
+   */
+  async getClientDocuments(clientId: number, orgId: number) {
+    // Verify ownership
+    await this.getClientById(clientId, orgId);
+
+    return this.db.query.clientDocuments.findMany({
+      where: eq(clientDocuments.clientId, clientId),
+      orderBy: [desc(clientDocuments.createdAt)],
+      with: {
+        uploadedBy: {
+          columns: { id: true, fullName: true }
+        }
+      }
+    });
   }
 }

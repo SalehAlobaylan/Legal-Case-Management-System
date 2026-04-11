@@ -49,6 +49,8 @@ const createClientSchema = z.object({
   address: z.string().optional(),
   notes: z.string().optional(),
   status: z.enum(["active", "inactive"]).optional(),
+  leadStatus: z.enum(["lead", "contacted", "consultation", "retained"]).optional(),
+  tags: z.array(z.string()).optional(),
 });
 
 const updateClientSchema = createClientSchema.partial();
@@ -108,21 +110,25 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
               enum: ["individual", "corporate", "sme", "group"],
             },
             status: { type: "string", enum: ["active", "inactive"] },
+            leadStatus: { type: "string", enum: ["lead", "contacted", "consultation", "retained"] },
+            tag: { type: "string" },
           },
         },
       } as FastifySchema,
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
-      const { type, status } = request.query as {
+      const { type, status, leadStatus, tag } = request.query as {
         type?: string;
         status?: string;
+        leadStatus?: string;
+        tag?: string;
       };
 
       const clientService = new ClientService(app.db);
       const clientsList = await clientService.getClientsByOrganization(
         user.orgId,
-        { type, status }
+        { type, status, leadStatus, tag }
       );
 
       return reply.send({ clients: clientsList });
@@ -248,6 +254,116 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       const cases = await clientService.getClientCases(clientId, user.orgId);
 
       return reply.send({ cases });
+    }
+  );
+
+  /**
+   * GET /api/clients/:id/activities
+   *
+   * - Gets all timeline activities for a specific client.
+   */
+  fastify.get(
+    "/:id/activities",
+    {
+      schema: {
+        description: "Get all activities for a client",
+        tags: ["clients"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { id } = request.params as { id: string };
+      const clientId = parseInt(id, 10);
+
+      if (isNaN(clientId)) {
+        return reply.status(400).send({ message: "Invalid client ID" });
+      }
+
+      const clientService = new ClientService(app.db);
+      const activities = await clientService.getClientActivities(clientId, user.orgId);
+
+      return reply.send({ activities });
+    }
+  );
+
+  /**
+   * POST /api/clients/:id/activities
+   *
+   * - Creates a new timeline activity for a client
+   */
+  const createActivitySchema = z.object({
+    type: z.enum(["call", "email", "meeting", "system", "note"]),
+    description: z.string().min(1),
+    metadata: z.record(z.any()).optional(),
+  });
+
+  fastify.post(
+    "/:id/activities",
+    {
+      schema: {
+        description: "Create an activity for client",
+        tags: ["clients"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          required: ["type", "description"],
+          properties: {
+            type: { type: "string", enum: ["call", "email", "meeting", "system", "note"] },
+            description: { type: "string", minLength: 1 },
+            metadata: { type: "object" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, body } = request as RequestWithUser & { body: unknown };
+      const { id } = request.params as { id: string };
+      const clientId = parseInt(id, 10);
+
+      if (isNaN(clientId)) {
+        return reply.status(400).send({ message: "Invalid client ID" });
+      }
+
+      const data = createActivitySchema.parse(body);
+
+      const clientService = new ClientService(app.db);
+      const activity = await clientService.createClientActivity(clientId, user.orgId, {
+        ...data,
+        userId: user.id,
+      });
+
+      return reply.code(201).send({ activity });
+    }
+  );
+
+  /**
+   * GET /api/clients/:id/documents
+   *
+   * - Gets all documents for a specific client.
+   */
+  fastify.get(
+    "/:id/documents",
+    {
+      schema: {
+        description: "Get all documents for a client",
+        tags: ["clients"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      const { id } = request.params as { id: string };
+      const clientId = parseInt(id, 10);
+
+      if (isNaN(clientId)) {
+        return reply.status(400).send({ message: "Invalid client ID" });
+      }
+
+      const clientService = new ClientService(app.db);
+      const documents = await clientService.getClientDocuments(clientId, user.orgId);
+
+      return reply.send({ documents });
     }
   );
 
