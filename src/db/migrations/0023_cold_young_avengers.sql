@@ -1,0 +1,1 @@
+ALTER TABLE "client_messages" ADD COLUMN "direction" varchar(20) DEFAULT 'outbound' NOT NULL;

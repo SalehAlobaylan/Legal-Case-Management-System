@@ -29,11 +29,16 @@ export class BillingService {
     status?: string;
     limit?: number;
     offset?: number;
+    clientId?: number;
   }) {
     const conditions = [eq(invoices.organizationId, orgId)];
 
     if (filters?.status) {
       conditions.push(eq(invoices.status, filters.status as any));
+    }
+
+    if (typeof filters?.clientId === "number") {
+      conditions.push(eq(invoices.clientId, filters.clientId));
     }
 
     const invoicesList = await this.db.query.invoices.findMany({
@@ -53,13 +58,46 @@ export class BillingService {
     return invoicesList;
   }
 
+  async createInvoice(input: {
+    organizationId: number;
+    clientId?: number;
+    amount: number;
+    currency?: string;
+    dueDate: Date;
+    description?: string;
+  }) {
+    const now = new Date();
+    const invoiceNumber = `INV-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(
+      now.getDate()
+    ).padStart(2, "0")}-${Math.floor(Math.random() * 9000 + 1000)}`;
+
+    const [invoice] = await this.db
+      .insert(invoices)
+      .values({
+        invoiceNumber,
+        organizationId: input.organizationId,
+        clientId: input.clientId,
+        amount: input.amount,
+        currency: input.currency || "SAR",
+        status: "pending",
+        issueDate: now,
+        dueDate: input.dueDate,
+        metadata: input.description
+          ? JSON.stringify({ description: input.description })
+          : null,
+      })
+      .returning();
+
+    return invoice;
+  }
+
   /**
    * getInvoiceById
    *
    * - Gets a single invoice by ID
    * - Verifies organization access
    */
-  async getInvoiceById(invoiceId: number, orgId: number) {
+  async getInvoiceById(invoiceId: number, orgId: number, scopedClientId?: number | null) {
     const invoice = await this.db.query.invoices.findFirst({
       where: eq(invoices.id, invoiceId),
       with: {
@@ -76,6 +114,10 @@ export class BillingService {
     }
 
     if (invoice.organizationId !== orgId) {
+      throw new ForbiddenError("Access denied to this invoice");
+    }
+
+    if (typeof scopedClientId === "number" && invoice.clientId !== scopedClientId) {
       throw new ForbiddenError("Access denied to this invoice");
     }
 

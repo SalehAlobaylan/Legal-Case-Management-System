@@ -12,6 +12,7 @@ import {
 import { relations } from "drizzle-orm";
 import { organizations } from "./organizations";
 import { users } from "./users";
+import { clients } from "./clients";
 
 export const caseTypeEnum = [
   "criminal",
@@ -51,6 +52,9 @@ export const cases = pgTable(
     assignedLawyerId: uuid("assigned_lawyer_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    clientId: integer("client_id").references(() => clients.id, {
+      onDelete: "set null",
+    }),
     courtJurisdiction: varchar("court_jurisdiction", { length: 255 }),
     filingDate: date("filing_date"),
     nextHearing: timestamp("next_hearing"),
@@ -65,6 +69,7 @@ export const cases = pgTable(
     assignedLawyerIdx: index("cases_assigned_lawyer_idx").on(
       table.assignedLawyerId
     ),
+    clientIdx: index("cases_client_idx").on(table.clientId),
     statusIdx: index("cases_status_idx").on(table.status),
   })
 );
@@ -78,11 +83,14 @@ export const casesRelations = relations(cases, ({ one }) => ({
     fields: [cases.assignedLawyerId],
     references: [users.id],
   }),
+  client: one(clients, {
+    fields: [cases.clientId],
+    references: [clients.id],
+  }),
 }));
 
 export type Case = typeof cases.$inferSelect;
 export type NewCase = typeof cases.$inferInsert;
 export type CaseType = (typeof caseTypeEnum)[number];
 export type CaseStatus = (typeof caseStatusEnum)[number];
-
 

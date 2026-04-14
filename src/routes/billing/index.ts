@@ -20,6 +20,7 @@ import * as path from "path";
 import type { Database } from "../../db/connection";
 import { organizations, invoices } from "../../db/schema";
 import { eq } from "drizzle-orm";
+import { getScopedClientIdForUser } from "../../lib/request-context";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -61,6 +62,7 @@ const billingRoutes: FastifyPluginAsync = async (fastify) => {
               type: "string",
               enum: ["pending", "paid", "overdue", "cancelled"],
             },
+            clientId: { type: "number", minimum: 1 },
             limit: { type: "number", default: 50 },
             offset: { type: "number", default: 0 },
           },
@@ -69,23 +71,28 @@ const billingRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
 
-      // Admin-only access
-      if (user.role !== "admin") {
+      // Staff/admin-only unless client-scoped portal view
+      if (user.role !== "admin" && typeof scopedClientId !== "number") {
         return reply.status(403).send({ message: "Admin access required" });
       }
 
       const query = request.query as {
         status?: string;
+        clientId?: string;
         limit?: string;
         offset?: string;
       };
+
+      const requestedClientId = query.clientId ? parseInt(query.clientId, 10) : undefined;
 
       const billingService = new BillingService(app.db);
       const invoices = await billingService.getInvoicesByOrganization(user.orgId, {
         status: query.status,
         limit: query.limit ? parseInt(query.limit) : undefined,
         offset: query.offset ? parseInt(query.offset) : undefined,
+        clientId: scopedClientId ?? requestedClientId,
       });
 
       return reply.send({ invoices });
@@ -98,6 +105,56 @@ const billingRoutes: FastifyPluginAsync = async (fastify) => {
    * - Subscribes organization to a billing plan
    * - Creates or updates subscription
    */
+  fastify.post(
+    "/invoices",
+    {
+      schema: {
+        description: "Create invoice",
+        tags: ["billing"],
+        security: [{ bearerAuth: [] }],
+        body: {
+          type: "object",
+          required: ["amount", "dueDate"],
+          properties: {
+            clientId: { type: "number", minimum: 1 },
+            amount: { type: "number", minimum: 1 },
+            currency: { type: "string", minLength: 3, maxLength: 3 },
+            dueDate: { type: "string", format: "date-time" },
+            description: { type: "string" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, body } = request as RequestWithUser & {
+        body: {
+          clientId?: number;
+          amount: number;
+          currency?: string;
+          dueDate: string;
+          description?: string;
+        };
+      };
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
+
+      if (user.role !== "admin" || typeof scopedClientId === "number") {
+        return reply.status(403).send({ message: "Admin access required" });
+      }
+
+      const billingService = new BillingService(app.db);
+      const invoice = await billingService.createInvoice({
+        organizationId: user.orgId,
+        clientId: body.clientId,
+        amount: body.amount,
+        currency: body.currency,
+        dueDate: new Date(body.dueDate),
+        description: body.description,
+      });
+
+      return reply.code(201).send({ invoice });
+    }
+  );
+
   fastify.post(
     "/subscribe",
     {
@@ -119,9 +176,10 @@ const billingRoutes: FastifyPluginAsync = async (fastify) => {
       const { user, body } = request as RequestWithUser & {
         body: { planId: number; billingCycle: "monthly" | "yearly" };
       };
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
 
       // Admin-only access
-      if (user.role !== "admin") {
+      if (user.role !== "admin" || typeof scopedClientId === "number") {
         return reply.status(403).send({ message: "Admin access required" });
       }
 
@@ -155,9 +213,10 @@ const billingRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
 
       // Admin-only access
-      if (user.role !== "admin") {
+      if (user.role !== "admin" || typeof scopedClientId === "number") {
         return reply.status(403).send({ message: "Admin access required" });
       }
 
@@ -196,6 +255,7 @@ const billingRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { id } = request.params as { id: string };
       const invoiceId = parseInt(id, 10);
 
@@ -203,15 +263,19 @@ const billingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: "Invalid invoice ID" });
       }
 
-      // Admin-only access
-      if (user.role !== "admin") {
+      // Admin-only access unless scoped client portal
+      if (user.role !== "admin" && typeof scopedClientId !== "number") {
         return reply.status(403).send({ message: "Admin access required" });
       }
 
       const billingService = new BillingService(app.db);
       const pdfService = new PDFDocumentService();
 
-      const invoice = await billingService.getInvoiceById(invoiceId, user.orgId);
+      const invoice = await billingService.getInvoiceById(
+        invoiceId,
+        user.orgId,
+        scopedClientId
+      );
 
       let pdfPath = invoice.pdfPath;
 

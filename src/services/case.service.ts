@@ -46,7 +46,11 @@ export class CaseService {
    * - Throws `ForbiddenError` if the case belongs to a different organization
    *   than the one provided via `orgId`.
    */
-  async getCaseById(id: number, orgId: number): Promise<Case> {
+  async getCaseById(
+    id: number,
+    orgId: number,
+    scopedClientId?: number | null
+  ): Promise<Case> {
     const case_ = await this.db.query.cases.findFirst({
       where: eq(cases.id, id),
       with: {
@@ -63,6 +67,13 @@ export class CaseService {
       throw new ForbiddenError("Access denied to this case");
     }
 
+    if (
+      typeof scopedClientId === "number" &&
+      case_.clientId !== scopedClientId
+    ) {
+      throw new ForbiddenError("Access denied to this case");
+    }
+
     return case_;
   }
 
@@ -72,7 +83,8 @@ export class CaseService {
       status?: string;
       caseType?: string;
       assignedLawyerId?: string;
-    }
+    },
+    scopedClientId?: number | null
   ) {
     const conditions = [eq(cases.organizationId, orgId)];
 
@@ -85,6 +97,9 @@ export class CaseService {
     }
     if (filters?.assignedLawyerId) {
       conditions.push(eq(cases.assignedLawyerId, filters.assignedLawyerId));
+    }
+    if (typeof scopedClientId === "number") {
+      conditions.push(eq(cases.clientId, scopedClientId));
     }
 
     // Always scope by organization and sort newest cases first
@@ -110,9 +125,14 @@ export class CaseService {
    * - Applies the provided partial update and refreshes the `updatedAt` timestamp.
    * - Returns the updated case record.
    */
-  async updateCase(id: number, orgId: number, data: Partial<NewCase>) {
+  async updateCase(
+    id: number,
+    orgId: number,
+    data: Partial<NewCase>,
+    scopedClientId?: number | null
+  ) {
     // Verify ownership
-    await this.getCaseById(id, orgId);
+    await this.getCaseById(id, orgId, scopedClientId);
 
     const [updated] = await this.db
       .update(cases)
@@ -133,9 +153,9 @@ export class CaseService {
    * - Deletes the case row from the database.
    * - Returns a simple `{ success: true }` payload for convenience.
    */
-  async deleteCase(id: number, orgId: number) {
+  async deleteCase(id: number, orgId: number, scopedClientId?: number | null) {
     // Verify ownership
-    await this.getCaseById(id, orgId);
+    await this.getCaseById(id, orgId, scopedClientId);
 
     await this.db.delete(cases).where(eq(cases.id, id));
 

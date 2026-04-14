@@ -6,7 +6,8 @@ import { RegulationRagService } from "../services/regulation-rag.service";
 import { logger } from "../utils/logger";
 
 function isConnectionError(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException)?.cause?.code ?? (err as NodeJS.ErrnoException)?.code;
+  const cause = (err as { cause?: { code?: string } })?.cause;
+  const code = cause?.code ?? (err as NodeJS.ErrnoException)?.code;
   const message = String((err as Error)?.message ?? "");
   return (
     code === "ECONNREFUSED" ||

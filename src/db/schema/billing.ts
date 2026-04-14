@@ -17,6 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { organizations } from "./organizations";
+import { clients } from "./clients";
 
 // ============== TYPE DEFINITIONS ==============
 
@@ -104,6 +105,9 @@ export const invoices = pgTable(
     organizationId: integer("organization_id")
       .references(() => organizations.id, { onDelete: "cascade" })
       .notNull(),
+    clientId: integer("client_id").references(() => clients.id, {
+      onDelete: "set null",
+    }),
     subscriptionId: integer("subscription_id").references(() => subscriptions.id),
     amount: integer("amount").notNull(), // in halalas
     currency: varchar("currency", { length: 3 }).default("SAR").notNull(),
@@ -121,6 +125,7 @@ export const invoices = pgTable(
   },
   (table) => ({
     orgIdx: index("invoices_org_idx").on(table.organizationId),
+    clientIdx: index("invoices_client_idx").on(table.clientId),
     invoiceNumIdx: index("invoices_number_idx").on(table.invoiceNumber),
     statusIdx: index("invoices_status_idx").on(table.status),
     dueDateIdx: index("invoices_due_date_idx").on(table.dueDate),
@@ -131,6 +136,10 @@ export const invoicesRelations = relations(invoices, ({ one }) => ({
   organization: one(organizations, {
     fields: [invoices.organizationId],
     references: [organizations.id],
+  }),
+  client: one(clients, {
+    fields: [invoices.clientId],
+    references: [clients.id],
   }),
   subscription: one(subscriptions, {
     fields: [invoices.subscriptionId],

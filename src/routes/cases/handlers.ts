@@ -21,6 +21,7 @@ import {
 import type { Database } from "../../db/connection";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
 import { NotificationDeliveryService } from "../../services/notification-delivery.service";
+import { getScopedClientIdForUser } from "../../lib/request-context";
 
 type RequestWithUserAndDb = FastifyRequest & {
   user: {
@@ -52,7 +53,12 @@ export async function createCaseHandler(
   reply: FastifyReply
 ) {
   const { body, user, server } = request as RequestWithUserAndDb;
+  const scopedClientId = await getScopedClientIdForUser(server.db, user);
   const data = createCaseSchema.parse(body as CreateCaseInput);
+
+  if (typeof scopedClientId === "number") {
+    return reply.code(403).send({ message: "Client accounts cannot create cases" });
+  }
 
   const caseService = new CaseService(server.db);
   const newCase = await caseService.createCase(
@@ -96,12 +102,14 @@ export async function getCasesHandler(
   reply: FastifyReply
 ) {
   const { query, user, server } = request as RequestWithUserAndDb;
+  const scopedClientId = await getScopedClientIdForUser(server.db, user);
   const filters = getCasesQuerySchema.parse(query as GetCasesQuery);
 
   const caseService = new CaseService(server.db);
   const casesList = await caseService.getCasesByOrganization(
     user.orgId,
-    filters
+    filters,
+    scopedClientId
   );
 
   return reply.send({ cases: casesList });
@@ -121,10 +129,11 @@ export async function getCaseByIdHandler(
   const { params, user, server } = request as RequestWithUserAndDb & {
     params: { id: string };
   };
+  const scopedClientId = await getScopedClientIdForUser(server.db, user);
   const id = parseInt(params.id, 10);
 
   const caseService = new CaseService(server.db);
-  const case_ = await caseService.getCaseById(id, user.orgId);
+  const case_ = await caseService.getCaseById(id, user.orgId, scopedClientId);
 
   return reply.send({ case: case_ });
 }
@@ -145,17 +154,22 @@ export async function updateCaseHandler(
   const { params, body, user, server } = request as RequestWithUserAndDb & {
     params: { id: string };
   };
+  const scopedClientId = await getScopedClientIdForUser(server.db, user);
   const id = parseInt(params.id, 10);
+
+  if (typeof scopedClientId === "number") {
+    return reply.code(403).send({ message: "Client accounts cannot update cases" });
+  }
   const data = updateCaseSchema.parse(body as UpdateCaseInput);
 
   const caseService = new CaseService(server.db);
-  const existingCase = await caseService.getCaseById(id, user.orgId);
+  const existingCase = await caseService.getCaseById(id, user.orgId, scopedClientId);
   const updated = await caseService.updateCase(id, user.orgId, {
     ...data,
     // Keep `filingDate` as a DATE string (or null) to match the Drizzle column type
     filingDate: data.filingDate ?? null,
     nextHearing: data.nextHearing ? new Date(data.nextHearing) : undefined,
-  });
+  }, scopedClientId);
 
   const titleChanged =
     typeof data.title === "string" && data.title !== existingCase.title;
@@ -198,10 +212,15 @@ export async function deleteCaseHandler(
   const { params, user, server } = request as RequestWithUserAndDb & {
     params: { id: string };
   };
+  const scopedClientId = await getScopedClientIdForUser(server.db, user);
   const id = parseInt(params.id, 10);
 
+  if (typeof scopedClientId === "number") {
+    return reply.code(403).send({ message: "Client accounts cannot delete cases" });
+  }
+
   const caseService = new CaseService(server.db);
-  await caseService.deleteCase(id, user.orgId);
+  await caseService.deleteCase(id, user.orgId, scopedClientId);
 
   return reply.code(204).send();
 }

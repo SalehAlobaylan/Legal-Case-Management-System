@@ -12,6 +12,7 @@ import type { Database } from "../../db/connection";
 import { DocumentService } from "../../services/document.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
 import { NotificationDeliveryService } from "../../services/notification-delivery.service";
+import { getScopedClientIdForUser } from "../../lib/request-context";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -56,6 +57,7 @@ const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { caseId } = request.params as { caseId: string };
       const caseIdNum = parseInt(caseId, 10);
       if (isNaN(caseIdNum)) {
@@ -63,7 +65,11 @@ const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      const rows = await documentService.getDocumentsByCaseId(caseIdNum, user.orgId);
+      const rows = await documentService.getDocumentsByCaseId(
+        caseIdNum,
+        user.orgId,
+        scopedClientId
+      );
       const extractionService = new DocumentExtractionService(app.db);
       const extractionMap = await extractionService.getCaseExtractionMap(
         caseIdNum,
@@ -100,10 +106,15 @@ const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { caseId } = request.params as { caseId: string };
       const caseIdNum = parseInt(caseId, 10);
       if (isNaN(caseIdNum)) {
         return reply.status(400).send({ message: "Invalid caseId parameter" });
+      }
+
+      if (typeof scopedClientId === "number") {
+        return reply.status(403).send({ message: "Client accounts cannot upload documents" });
       }
 
       const data = await request.file();

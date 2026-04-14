@@ -74,7 +74,7 @@ const envSchema = z.object({
   REG_LINK_CHUNK_CHARS: z.coerce.number().int().min(200).default(1200),
   REG_LINK_MAX_CHUNKS: z.coerce.number().int().min(1).max(5000).default(400),
 
-  AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(60000),
+  AI_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(1000).max(900000).default(60000),
 
   CORS_ORIGIN: z.string().default("*"),
 
@@ -86,6 +86,21 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CALLBACK_URL: z.string().url().default("http://localhost:3000/api/auth/google/callback"),
   FRONTEND_URL: z.string().url().default("http://localhost:3001"),
+
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().optional(),
+  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM_EMAIL: z.string().email().optional(),
+  SMTP_FROM_NAME: z.string().optional(),
+
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_SMS_FROM: z.string().optional(),
+  TWILIO_WHATSAPP_FROM: z.string().optional(),
+
+  WEBHOOK_SHARED_SECRET: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

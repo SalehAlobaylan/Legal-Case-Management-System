@@ -5,6 +5,8 @@ import jwt from "@fastify/jwt";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import multipart from "@fastify/multipart";
+import staticPlugin from "@fastify/static";
+import path from "path";
 import { env } from "./config/env";
 
 // Plugins
@@ -31,6 +33,12 @@ import billingRoutes from "./routes/billing";
 import aiRoutes from "./routes/ai";
 import caseDocumentsRoutes from "./routes/case-documents";
 import searchRoutes from "./routes/search";
+import intakeRoutes from "./routes/intake";
+import publicIntakeRoutes from "./routes/public-intake";
+import automationsRoutes from "./routes/automations";
+import { AutomationEngineService } from "./services/automation-engine.service";
+import webhooksRoutes from "./routes/webhooks";
+import { MessagingRetryService } from "./services/messaging-retry.service";
 
 export function buildApp(opts = {}) {
   const app = Fastify({
@@ -67,8 +75,25 @@ export function buildApp(opts = {}) {
     },
   });
 
+  app.register(staticPlugin, {
+    root: path.resolve(process.env.UPLOAD_DIR || "./uploads"),
+    prefix: "/uploads/",
+  });
+
   // Core plugins
   app.register(databasePlugin);
+  let automationEngine: AutomationEngineService | null = null;
+  let messagingRetry: MessagingRetryService | null = null;
+  app.addHook("onReady", async () => {
+    automationEngine = new AutomationEngineService((app as any).db);
+    automationEngine.start();
+    messagingRetry = new MessagingRetryService((app as any).db);
+    messagingRetry.start();
+  });
+  app.addHook("onClose", async () => {
+    automationEngine?.stop();
+    messagingRetry?.stop();
+  });
   app.register(authPlugin);
   app.register(errorHandlerPlugin);
   app.register(swaggerPlugin);
@@ -96,7 +121,10 @@ export function buildApp(opts = {}) {
   app.register(billingRoutes, { prefix: "/api/billing" });
   app.register(aiRoutes, { prefix: "/api/ai" });
   app.register(searchRoutes, { prefix: "/api/search" });
+  app.register(intakeRoutes, { prefix: "/api/intake-forms" });
+  app.register(publicIntakeRoutes, { prefix: "/api/public/intake" });
+  app.register(automationsRoutes, { prefix: "/api/automations" });
+  app.register(webhooksRoutes, { prefix: "/api/webhooks" });
 
   return app;
 }
-

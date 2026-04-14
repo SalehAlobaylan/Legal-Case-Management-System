@@ -5,7 +5,7 @@
  * - All operations are scoped to the user's organization.
  */
 
-import { eq, and, desc, like, sql } from "drizzle-orm";
+import { eq, and, desc, like, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import { 
@@ -14,7 +14,8 @@ import {
   cases,
   clientActivities,
   clientDocuments,
-  type NewClientActivity
+  type NewClientActivity,
+  type NewClientDocument,
 } from "../db/schema";
 import { NotFoundError, ForbiddenError } from "../utils/errors";
 
@@ -101,8 +102,8 @@ export class ClientService {
    * - Verifies organization access first.
    */
   async updateClient(id: number, orgId: number, data: Partial<NewClient>) {
-    // Verify ownership
-    await this.getClientById(id, orgId);
+    // Verify ownership and capture previous state
+    const previous = await this.getClientById(id, orgId);
 
     const [updated] = await this.db
       .update(clients)
@@ -113,7 +114,7 @@ export class ClientService {
       .where(eq(clients.id, id))
       .returning();
 
-    return updated;
+    return { updated, previous };
   }
 
   /**
@@ -141,11 +142,11 @@ export class ClientService {
     // First get the client to verify access and get their name
     const client = await this.getClientById(clientId, orgId);
 
-    // Find cases that reference this client by name in clientInfo
+    // Prefer direct foreign key mapping, with fallback to legacy clientInfo text matching
     const clientCases = await this.db.query.cases.findMany({
       where: and(
         eq(cases.organizationId, orgId),
-        like(cases.clientInfo, `%${client.name}%`)
+        or(eq(cases.clientId, clientId), like(cases.clientInfo, `%${client.name}%`))!
       ),
       orderBy: [desc(cases.createdAt)],
     });
@@ -211,5 +212,42 @@ export class ClientService {
         }
       }
     });
+  }
+
+  async createClientDocument(
+    clientId: number,
+    orgId: number,
+    data: Omit<NewClientDocument, "clientId">
+  ) {
+    await this.getClientById(clientId, orgId);
+
+    const [created] = await this.db
+      .insert(clientDocuments)
+      .values({
+        ...data,
+        clientId,
+      })
+      .returning();
+
+    return created;
+  }
+
+  async deleteClientDocument(clientId: number, documentId: number, orgId: number) {
+    await this.getClientById(clientId, orgId);
+
+    const existing = await this.db.query.clientDocuments.findFirst({
+      where: and(eq(clientDocuments.id, documentId), eq(clientDocuments.clientId, clientId)),
+    });
+
+    if (!existing) {
+      throw new NotFoundError("Client document");
+    }
+
+    const [deleted] = await this.db
+      .delete(clientDocuments)
+      .where(and(eq(clientDocuments.id, documentId), eq(clientDocuments.clientId, clientId)))
+      .returning();
+
+    return deleted;
   }
 }

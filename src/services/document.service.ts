@@ -36,7 +36,7 @@ export class DocumentService {
    * - Throws NotFoundError if document doesn't exist.
    * - Throws ForbiddenError if document belongs to another org.
    */
-  async getDocumentById(id: number, orgId: number) {
+  async getDocumentById(id: number, orgId: number, scopedClientId?: number | null) {
     const document = await this.db.query.documents.findFirst({
       where: eq(documents.id, id),
       with: {
@@ -60,6 +60,13 @@ export class DocumentService {
       throw new ForbiddenError("Access denied to this document");
     }
 
+    if (
+      typeof scopedClientId === "number" &&
+      document.case.clientId !== scopedClientId
+    ) {
+      throw new ForbiddenError("Access denied to this document");
+    }
+
     return document;
   }
 
@@ -70,7 +77,11 @@ export class DocumentService {
    * - Verifies the case belongs to the specified organization.
    * - Orders by creation date descending (newest first).
    */
-  async getDocumentsByCaseId(caseId: number, orgId: number) {
+  async getDocumentsByCaseId(
+    caseId: number,
+    orgId: number,
+    scopedClientId?: number | null
+  ) {
     // First verify the case exists and belongs to org
     const case_ = await this.db.query.cases.findFirst({
       where: eq(cases.id, caseId),
@@ -81,6 +92,10 @@ export class DocumentService {
     }
 
     if (case_.organizationId !== orgId) {
+      throw new ForbiddenError("Access denied to this case");
+    }
+
+    if (typeof scopedClientId === "number" && case_.clientId !== scopedClientId) {
       throw new ForbiddenError("Access denied to this case");
     }
 
@@ -106,9 +121,9 @@ export class DocumentService {
    * - Verifies it belongs to the specified organization first.
    * - Returns the deleted document for cleanup of the actual file.
    */
-  async deleteDocument(id: number, orgId: number) {
+  async deleteDocument(id: number, orgId: number, scopedClientId?: number | null) {
     // Verify access first
-    const document = await this.getDocumentById(id, orgId);
+    const document = await this.getDocumentById(id, orgId, scopedClientId);
 
     await this.db.delete(documents).where(eq(documents.id, id));
 

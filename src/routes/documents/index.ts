@@ -20,6 +20,7 @@ import type { Database } from "../../db/connection";
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
+import { getScopedClientIdForUser } from "../../lib/request-context";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -81,6 +82,7 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { caseId } = request.params as { caseId: string };
       const caseIdNum = parseInt(caseId, 10);
 
@@ -89,7 +91,11 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      const documents = await documentService.getDocumentsByCaseId(caseIdNum, user.orgId);
+      const documents = await documentService.getDocumentsByCaseId(
+        caseIdNum,
+        user.orgId,
+        scopedClientId
+      );
       const extractionService = new DocumentExtractionService(app.db);
       const extractionMap = await extractionService.getCaseExtractionMap(
         caseIdNum,
@@ -133,11 +139,16 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { caseId } = request.params as { caseId: string };
       const caseIdNum = parseInt(caseId, 10);
 
       if (isNaN(caseIdNum)) {
         return reply.status(400).send({ message: "Invalid caseId parameter" });
+      }
+
+      if (typeof scopedClientId === "number") {
+        return reply.status(403).send({ message: "Client accounts cannot upload documents" });
       }
 
       // Parse multipart data
@@ -233,6 +244,7 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     reply: FastifyReply
   ) => {
     const { user } = request as RequestWithUser;
+    const scopedClientId = await getScopedClientIdForUser(app.db, user);
     const { id } = request.params as { id: string };
     const docId = parseInt(id, 10);
 
@@ -241,7 +253,11 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const documentService = new DocumentService(app.db);
-    const document = await documentService.getDocumentById(docId, user.orgId);
+    const document = await documentService.getDocumentById(
+      docId,
+      user.orgId,
+      scopedClientId
+    );
 
     if (!fs.existsSync(document.filePath)) {
       return reply.status(404).send({ message: "File not found on disk" });
@@ -319,11 +335,16 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { id } = request.params as { id: string };
       const docId = parseInt(id, 10);
 
       if (isNaN(docId)) {
         return reply.status(400).send({ message: "Invalid document ID" });
+      }
+
+      if (typeof scopedClientId === "number") {
+        return reply.status(403).send({ message: "Client accounts cannot delete documents" });
       }
 
       const documentService = new DocumentService(app.db);
@@ -370,6 +391,7 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { docId } = request.params as { docId: string };
       const docIdNum = parseInt(docId, 10);
 
@@ -383,7 +405,7 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      await documentService.getDocumentById(docIdNum, user.orgId);
+      await documentService.getDocumentById(docIdNum, user.orgId, scopedClientId);
 
       const extractionService = new DocumentExtractionService(app.db);
       const existingInsights = await extractionService.getDocumentInsightsByDocumentId(
@@ -458,12 +480,16 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { id } = request.params as { id: string };
       const docId = parseInt(id, 10);
 
       if (isNaN(docId)) {
         return reply.status(400).send({ message: "Invalid document ID" });
       }
+
+      const documentService = new DocumentService(app.db);
+      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
 
       const extractionService = new DocumentExtractionService(app.db);
       const insights = await extractionService.getDocumentInsightsByDocumentId(
@@ -494,12 +520,20 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { id } = request.params as { id: string };
       const docId = parseInt(id, 10);
 
       if (isNaN(docId)) {
         return reply.status(400).send({ message: "Invalid document ID" });
       }
+
+      if (typeof scopedClientId === "number") {
+        return reply.status(403).send({ message: "Client accounts cannot refresh insights" });
+      }
+
+      const documentService = new DocumentService(app.db);
+      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
 
       const extractionService = new DocumentExtractionService(app.db);
       await extractionService.enqueueDocumentInsights(docId, user.orgId);
@@ -541,12 +575,20 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { id } = request.params as { id: string };
       const docId = parseInt(id, 10);
 
       if (isNaN(docId)) {
         return reply.status(400).send({ message: "Invalid document ID" });
       }
+
+      if (typeof scopedClientId === "number") {
+        return reply.status(403).send({ message: "Client accounts cannot refresh extraction" });
+      }
+
+      const documentService = new DocumentService(app.db);
+      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
 
       const extractionService = new DocumentExtractionService(app.db);
       await extractionService.enqueueSingleDocument(docId, user.orgId, { force: true });
@@ -597,12 +639,16 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
+      const scopedClientId = await getScopedClientIdForUser(app.db, user);
       const { id } = request.params as { id: string };
       const docId = parseInt(id, 10);
 
       if (isNaN(docId)) {
         return reply.status(400).send({ message: "Invalid document ID" });
       }
+
+      const documentService = new DocumentService(app.db);
+      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
 
       const extractionService = new DocumentExtractionService(app.db);
       const status = await extractionService.getExtractionStatusByDocumentId(

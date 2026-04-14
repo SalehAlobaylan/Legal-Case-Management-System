@@ -22,6 +22,7 @@ const ROLE_PRIORITY: Record<UserRole, number> = {
   lawyer: 2,
   paralegal: 3,
   clerk: 4,
+  client: 5,
 };
 
 export class TeamService {

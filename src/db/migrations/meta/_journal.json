@@ -141,6 +141,48 @@
       "when": 1775928690834,
       "tag": "0019_kind_magneto",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1775939126775,
+      "tag": "0020_lonely_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1775939532390,
+      "tag": "0021_eager_vance_astro",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1775946425190,
+      "tag": "0022_wandering_energizer",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1775947181057,
+      "tag": "0023_cold_young_avengers",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1775947426588,
+      "tag": "0024_mixed_silk_fever",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1775948698867,
+      "tag": "0025_curvy_storm",
+      "breakpoints": true
     }
   ]
 }

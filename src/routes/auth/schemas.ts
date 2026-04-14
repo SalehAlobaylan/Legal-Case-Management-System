@@ -21,6 +21,7 @@ const userRoleSchema = z.enum([
   "lawyer",
   "paralegal",
   "clerk",
+  "client",
 ]);
 
 export const registerSchema = z

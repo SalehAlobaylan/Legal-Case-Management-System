@@ -22,7 +22,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
       organizationId: { type: "number" },
       role: {
         type: "string",
-        enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+        enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk", "client"],
       },
       createdAt: { type: "string", format: "date-time" },
       updatedAt: { type: "string", format: "date-time" },
@@ -54,7 +54,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
                 fullName: { type: "string", minLength: 2 },
                 role: {
                   type: "string",
-                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk", "client"],
                 },
               },
             },
@@ -70,7 +70,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
                 organizationId: { type: "number" },
                 role: {
                   type: "string",
-                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk", "client"],
                 },
               },
             },
@@ -88,7 +88,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
                 subscriptionTier: { type: "string" },
                 role: {
                   type: "string",
-                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk"],
+                  enum: ["admin", "senior_lawyer", "lawyer", "paralegal", "clerk", "client"],
                 },
               },
             },

@@ -78,14 +78,14 @@ export const clientsRelations = relations(clients, ({ one, many }) => ({
   documents: many(clientDocuments),
 }));
 
-export const activityTypeEnum = ["call", "email", "meeting", "system", "note"] as const;
+export const clientActivityTypeEnum = ["call", "email", "meeting", "system", "note"] as const;
 
 export const clientActivities = pgTable("client_activities", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id")
     .references(() => clients.id, { onDelete: "cascade" })
     .notNull(),
-  type: varchar("type", { length: 50 }).$type<(typeof activityTypeEnum)[number]>().notNull(),
+  type: varchar("type", { length: 50 }).$type<(typeof clientActivityTypeEnum)[number]>().notNull(),
   description: text("description").notNull(),
   metadata: jsonb("metadata").$type<Record<string, any>>(),
   userId: uuid("user_id").references(() => users.id),

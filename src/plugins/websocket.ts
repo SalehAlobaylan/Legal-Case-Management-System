@@ -23,6 +23,12 @@ declare module "fastify" {
      * connections that belong to the given organization.
      */
     broadcastToOrg: (orgId: number, event: string, data: any) => void;
+    broadcastToClientRoom: (
+      orgId: number,
+      clientId: number,
+      event: string,
+      data: any
+    ) => void;
   }
 }
 
@@ -119,6 +125,37 @@ const websocketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
       timestamp: new Date().toISOString(),
     });
 
+    socket.on("client-messages:join", (payload: { clientId?: number }) => {
+      const clientId = Number(payload?.clientId);
+      if (!clientId || Number.isNaN(clientId)) return;
+      const room = `org:${orgId}:client:${clientId}`;
+      socket.join(room);
+      socket.emit("client-messages:joined", {
+        clientId,
+        room,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    socket.on("client-messages:leave", (payload: { clientId?: number }) => {
+      const clientId = Number(payload?.clientId);
+      if (!clientId || Number.isNaN(clientId)) return;
+      const room = `org:${orgId}:client:${clientId}`;
+      socket.leave(room);
+    });
+
+    socket.on("client-messages:typing", (payload: { clientId?: number; typing?: boolean }) => {
+      const clientId = Number(payload?.clientId);
+      if (!clientId || Number.isNaN(clientId)) return;
+      const room = `org:${orgId}:client:${clientId}`;
+      socket.to(room).emit("client-messages:typing", {
+        clientId,
+        typing: Boolean(payload?.typing),
+        userId,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
     // Handle disconnection
     socket.on("disconnect", (reason) => {
       fastify.log.info(
@@ -166,6 +203,17 @@ const websocketPlugin: FastifyPluginAsync = async (fastify: FastifyInstance) => 
         { orgId, event, recipientCount: io.sockets.adapter.rooms.get(orgRoom)?.size || 0 },
         "Broadcast sent to organization"
       );
+    }
+  );
+
+  fastify.decorate(
+    "broadcastToClientRoom",
+    (orgId: number, clientId: number, event: string, data: any) => {
+      const room = `org:${orgId}:client:${clientId}`;
+      io.to(room).emit(event, {
+        ...data,
+        timestamp: new Date().toISOString(),
+      });
     }
   );
 

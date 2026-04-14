@@ -27,6 +27,7 @@ export const createCaseSchema = z.object({
     .enum(["open", "in_progress", "pending_hearing", "closed", "archived"])
     .optional(),
   clientInfo: z.string().optional(),
+  clientId: z.number().int().positive().optional(),
   courtJurisdiction: z.string().optional(),
   filingDate: z.string().optional(), // ISO date string
   nextHearing: z.string().optional(),
@@ -43,5 +44,4 @@ export const getCasesQuerySchema = z.object({
 export type CreateCaseInput = z.infer<typeof createCaseSchema>;
 export type UpdateCaseInput = z.infer<typeof updateCaseSchema>;
 export type GetCasesQuery = z.infer<typeof getCasesQuerySchema>;
-
 

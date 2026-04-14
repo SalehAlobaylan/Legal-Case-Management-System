@@ -12,9 +12,9 @@
  * returns "sanitized" user objects that never expose the `passwordHash` field.
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { users, organizations, UserRole } from "../db/schema";
+import { users, organizations, UserRole, clientPortalAccounts } from "../db/schema";
 import { hashPassword, verifyPassword } from "../utils/hash";
 import { UnauthorizedError, ConflictError, NotFoundError } from "../utils/errors";
 import { OrganizationService } from "./organization.service";
@@ -226,8 +226,23 @@ export class AuthService {
    * - Internal helper that strips the sensitive `passwordHash` and OAuth-related fields from a user record.
    * - Returns a "safe" user object that can be sent back to API clients.
    */
-  private sanitizeUser(user: typeof users.$inferSelect) {
+  private async sanitizeUser(user: typeof users.$inferSelect) {
     const { passwordHash, googleId, isOAuthUser, ...safeUser } = user;
-    return safeUser;
+    if (safeUser.role !== "client") {
+      return safeUser;
+    }
+
+    const mapping = await this.db.query.clientPortalAccounts.findFirst({
+      where: and(
+        eq(clientPortalAccounts.userId, safeUser.id),
+        eq(clientPortalAccounts.organizationId, safeUser.organizationId),
+        eq(clientPortalAccounts.status, "active")
+      ),
+    });
+
+    return {
+      ...safeUser,
+      clientId: mapping?.clientId ?? null,
+    };
   }
 }
