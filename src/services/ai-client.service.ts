@@ -240,6 +240,14 @@ export interface RegulationAmendmentImpactResponse {
 export class AIClientService {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  private static readonly RETRYABLE_STATUS_CODES = new Set([
+    408,
+    429,
+    500,
+    502,
+    503,
+    504,
+  ]);
 
   constructor() {
     if (!env.AI_SERVICE_URL) {
@@ -254,8 +262,120 @@ export class AIClientService {
   }
 
   /** Create an AbortSignal that times out after the configured duration. */
-  private signal(): AbortSignal {
-    return AbortSignal.timeout(this.timeoutMs);
+  private signal(timeoutMs?: number): AbortSignal {
+    return AbortSignal.timeout(Math.max(1000, timeoutMs ?? this.timeoutMs));
+  }
+
+  private isRetryableError(error: unknown): boolean {
+    if (!error || typeof error !== "object") {
+      return false;
+    }
+
+    const candidate = error as { name?: string; message?: string; cause?: unknown };
+    if (candidate.name === "AbortError" || candidate.name === "TimeoutError") {
+      return true;
+    }
+
+    const message = (candidate.message || "").toLowerCase();
+    if (
+      message.includes("fetch failed") ||
+      message.includes("network") ||
+      message.includes("timeout") ||
+      message.includes("socket") ||
+      message.includes("econn") ||
+      message.includes("enotfound")
+    ) {
+      return true;
+    }
+
+    if (candidate.cause && typeof candidate.cause === "object") {
+      const causeCode = (
+        candidate.cause as { code?: string; errno?: string }
+      ).code || (candidate.cause as { code?: string; errno?: string }).errno;
+      if (typeof causeCode === "string") {
+        return [
+          "ECONNRESET",
+          "ECONNREFUSED",
+          "ECONNABORTED",
+          "ENOTFOUND",
+          "ETIMEDOUT",
+          "EAI_AGAIN",
+        ].includes(causeCode.toUpperCase());
+      }
+    }
+
+    return false;
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async fetchWithRetry(
+    url: string,
+    init: RequestInit,
+    context: string,
+    options?: { timeoutMs?: number; maxRetries?: number }
+  ): Promise<Response> {
+    const maxRetries = Math.max(0, options?.maxRetries ?? 2);
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        const attemptTimeoutMs = Math.min(
+          300000,
+          Math.max(
+            1000,
+            (options?.timeoutMs ?? this.timeoutMs) + attempt * 15000
+          )
+        );
+
+        const response = await fetch(url, {
+          ...init,
+          signal: this.signal(attemptTimeoutMs),
+        });
+
+        if (response.ok) {
+          return response;
+        }
+
+        if (
+          AIClientService.RETRYABLE_STATUS_CODES.has(response.status) &&
+          attempt < maxRetries
+        ) {
+          logger.warn(
+            {
+              status: response.status,
+              context,
+              attempt: attempt + 1,
+              maxRetries,
+            },
+            "AI service transient HTTP error, retrying"
+          );
+          await this.delay(250 * (attempt + 1));
+          continue;
+        }
+
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(`AI service error (${context}): ${response.status} ${errorText}`);
+      } catch (error) {
+        if (attempt < maxRetries && this.isRetryableError(error)) {
+          logger.warn(
+            {
+              err: error,
+              context,
+              attempt: attempt + 1,
+              maxRetries,
+            },
+            "AI service request failed transiently, retrying"
+          );
+          await this.delay(250 * (attempt + 1));
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error(`AI service error (${context}): request failed after retries`);
   }
 
   /**
@@ -266,22 +386,14 @@ export class AIClientService {
    */
   async generateEmbeddings(texts: string[]): Promise<EmbeddingResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/embed/`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/embed/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           texts,
           normalize: true,
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `AI service error (embed): ${response.status} ${errorText}`
-        );
-      }
+      }, "embed");
 
       const data = (await response.json()) as EmbeddingResponse;
       if (!Array.isArray(data.embeddings)) {
@@ -346,7 +458,7 @@ export class AIClientService {
     try {
       const topK = options?.topK ?? 10;
       const threshold = options?.threshold ?? 0.3;
-      const response = await fetch(`${this.baseUrl}/similarity/find-related`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/similarity/find-related`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -362,15 +474,7 @@ export class AIClientService {
           scoring_profile: options?.scoringProfile,
           ...(options?.pipelineToggles || {}),
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `AI service error (find-related): ${response.status} ${errorText}`
-        );
-      }
+      }, "find-related", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
       const data = (await response.json()) as FindRelatedResponse;
       return data.related_regulations ?? [];
@@ -387,7 +491,7 @@ export class AIClientService {
     input: ExtractRegulationInput
   ): Promise<ExtractRegulationResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/regulations/extract`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/regulations/extract`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -396,15 +500,7 @@ export class AIClientService {
           if_modified_since: input.ifModifiedSince || undefined,
           max_chars: input.maxChars,
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `AI service error (regulations/extract): ${response.status} ${errorText}`
-        );
-      }
+      }, "regulations/extract", { timeoutMs: Math.max(this.timeoutMs, 180000) });
 
       return (await response.json()) as ExtractRegulationResponse;
     } catch (error) {
@@ -429,18 +525,10 @@ export class AIClientService {
         formData.append("max_chars", String(input.maxChars));
       }
 
-      const response = await fetch(`${this.baseUrl}/documents/extract`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/documents/extract`, {
         method: "POST",
         body: formData,
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `AI service error (documents/extract): ${response.status} ${errorText}`
-        );
-      }
+      }, "documents/extract", { timeoutMs: Math.max(this.timeoutMs, 180000) });
 
       return (await response.json()) as ExtractDocumentResponse;
     } catch (error) {
@@ -456,7 +544,7 @@ export class AIClientService {
     input: DocumentCaseInsightsInput
   ): Promise<DocumentCaseInsightsResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/documents/case-insights`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/documents/case-insights`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -466,15 +554,7 @@ export class AIClientService {
           top_k: input.topK,
           max_source_chars: input.maxSourceChars,
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `AI service error (documents/case-insights): ${response.status} ${errorText}`
-        );
-      }
+      }, "documents/case-insights", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
       return (await response.json()) as DocumentCaseInsightsResponse;
     } catch (error) {
@@ -493,7 +573,7 @@ export class AIClientService {
     input: RegulationSummaryAnalysisInput
   ): Promise<RegulationSummaryAnalysisResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/regulations/summary-analysis`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/regulations/summary-analysis`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -503,15 +583,7 @@ export class AIClientService {
           language_code: input.languageCode || "ar",
           max_source_chars: input.maxSourceChars,
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `AI service error (regulations/summary-analysis): ${response.status} ${errorText}`
-        );
-      }
+      }, "regulations/summary-analysis", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
       return (await response.json()) as RegulationSummaryAnalysisResponse;
     } catch (error) {
@@ -527,7 +599,7 @@ export class AIClientService {
     input: RegulationAmendmentImpactInput
   ): Promise<RegulationAmendmentImpactResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/regulations/amendment-impact`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/regulations/amendment-impact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -540,15 +612,9 @@ export class AIClientService {
           language_code: input.languageCode || "ar",
           max_source_chars: input.maxSourceChars,
         }),
-        signal: this.signal(),
+      }, "regulations/amendment-impact", {
+        timeoutMs: Math.max(this.timeoutMs, 120000),
       });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `AI service error (regulations/amendment-impact): ${response.status} ${errorText}`
-        );
-      }
 
       return (await response.json()) as RegulationAmendmentImpactResponse;
     } catch (error) {
@@ -577,7 +643,7 @@ export class AIClientService {
     history?: { role: string; content: string }[]
   ): Promise<ChatResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/chat`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -585,13 +651,7 @@ export class AIClientService {
           context: context || {},
           history: history || [],
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(`AI service error (chat): ${response.status} ${errorText}`);
-      }
+      }, "chat", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
       return (await response.json()) as ChatResponse;
     } catch (error) {
@@ -607,17 +667,11 @@ export class AIClientService {
    * - Returns the raw Response so the caller can pipe the SSE stream.
    */
   async chatStream(payload: ChatStreamPayload): Promise<Response> {
-    const response = await fetch(`${this.baseUrl}/chat/stream`, {
+    const response = await this.fetchWithRetry(`${this.baseUrl}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: this.signal(),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => response.statusText);
-      throw new Error(`AI service error (chat/stream): ${response.status} ${errorText}`);
-    }
+    }, "chat/stream", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
     return response;
   }
@@ -636,7 +690,7 @@ export class AIClientService {
     courtJurisdiction: string | null;
   }): Promise<CaseAnalysisResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/analyze-case`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/analyze-case`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -646,13 +700,7 @@ export class AIClientService {
           status: caseData.status,
           court_jurisdiction: caseData.courtJurisdiction || "",
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(`AI service error (analyze-case): ${response.status} ${errorText}`);
-      }
+      }, "analyze-case", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
       return (await response.json()) as CaseAnalysisResponse;
     } catch (error) {
@@ -672,20 +720,14 @@ export class AIClientService {
     fileName: string
   ): Promise<DocumentSummaryResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/summarize-document`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/summarize-document`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: documentContent,
           file_name: fileName,
         }),
-        signal: this.signal(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(`AI service error (summarize-document): ${response.status} ${errorText}`);
-      }
+      }, "summarize-document", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
       return (await response.json()) as DocumentSummaryResponse;
     } catch (error) {
@@ -765,9 +807,6 @@ export interface DocumentSummaryResponse {
     description: string;
   }[];
 }
-
-
-
 
 
 

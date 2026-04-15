@@ -77,6 +77,16 @@ function parseMatchExplanation(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function buildCandidateContentText(
+  latestVersionContent: string | null | undefined,
+  summary: string | null | undefined,
+  title: string,
+  maxChars: number
+) {
+  const source = latestVersionContent || summary || title;
+  return source.slice(0, maxChars);
+}
+
 function serializeLinkForClient(
   link: any,
   isSubscribed?: boolean
@@ -238,6 +248,15 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         topK: env.REG_LINK_PREFILTER_TOP_K,
         perRegulationLimit: env.REG_LINK_CANDIDATE_CHUNKS_PER_REG,
       });
+      const prefilterHealthy = !chunkRetrieval.warnings.includes(
+        "query_embedding_generation_failed"
+      );
+      const indexedCandidateLimit = prefilterHealthy ? 50 : 25;
+      const fallbackCandidateLimit = prefilterHealthy ? 10 : 5;
+      const candidateContentMaxChars = Math.max(
+        800,
+        Math.min(env.CASE_LINK_DOC_MAX_CHARS_PER_DOC, 3000)
+      );
       const bestChunkScoreByRegulationId = new Map<number, number>();
       for (const [regulationId, chunks] of chunkRetrieval.byRegulationId.entries()) {
         const best = chunks.reduce((max, item) => Math.max(max, item.score || 0), 0);
@@ -263,10 +282,12 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
           title: regulation.title,
           category: regulation.category,
           regulation_version_id: latestVersion?.id || null,
-          content_text:
-            latestVersion?.content?.slice(0, env.CASE_LINK_DOC_TOTAL_MAX_CHARS) ||
-            regulation.summary ||
+          content_text: buildCandidateContentText(
+            latestVersion?.content,
+            regulation.summary,
             regulation.title,
+            candidateContentMaxChars
+          ),
           candidate_chunks: versionChunks?.map((chunk) => ({
             chunk_id: chunk.chunkId,
             chunk_index: chunk.chunkIndex,
@@ -295,8 +316,8 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       const selectedCandidates = [
-        ...indexedCandidates.slice(0, 50),
-        ...fallbackCandidates.slice(0, 10),
+        ...indexedCandidates.slice(0, indexedCandidateLimit),
+        ...fallbackCandidates.slice(0, fallbackCandidateLimit),
       ];
 
       if (selectedCandidates.length === 0) {
@@ -308,10 +329,12 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
               title: regulation.title,
               category: regulation.category,
               regulation_version_id: latestVersion?.id || null,
-              content_text:
-                latestVersion?.content?.slice(0, env.CASE_LINK_DOC_TOTAL_MAX_CHARS) ||
-                regulation.summary ||
+              content_text: buildCandidateContentText(
+                latestVersion?.content,
+                regulation.summary,
                 regulation.title,
+                candidateContentMaxChars
+              ),
             } satisfies SimilarityRegulationCandidate;
           })
         );
@@ -353,6 +376,9 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       const generationWarnings = [
         ...new Set([
           ...chunkRetrieval.warnings,
+          ...(!prefilterHealthy
+            ? ["regulation_prefilter_unavailable_degraded_candidate_limits"]
+            : []),
           ...(fallbackUsed ? ["regulation_chunk_index_fallback_used"] : []),
         ]),
       ];
