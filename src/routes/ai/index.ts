@@ -531,7 +531,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
                 const caseData = await caseService.getCaseById(caseIdNum, user.orgId);
 
                 const aiClient = new AIClientService();
-                const analysis = await aiClient.analyzeCase({
+                const raw = await aiClient.analyzeCase({
                     title: caseData.title,
                     description: caseData.description,
                     caseType: caseData.caseType,
@@ -539,7 +539,25 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
                     courtJurisdiction: caseData.courtJurisdiction,
                 });
 
-                return reply.send(analysis);
+                // Transform flat AI-service shape → nested shape the frontend expects.
+                const recs = Array.isArray(raw.recommendations) && raw.recommendations.length > 0
+                    ? raw.recommendations
+                    : raw.recommendedStrategy
+                        ? [raw.recommendedStrategy]
+                        : [];
+                return reply.send({
+                    analysis: {
+                        summary: raw.summary ?? "",
+                        strengths: raw.strengths ?? [],
+                        weaknesses: raw.weaknesses ?? [],
+                        risks: raw.risks ?? [],
+                        recommendations: recs,
+                        relevantRegulations: [],
+                        suggestedStrategy: raw.recommendedStrategy ?? undefined,
+                    },
+                    confidence: raw.successProbability ?? 0.7,
+                    generatedAt: new Date().toISOString(),
+                });
             } catch (error: any) {
                 if (error.message?.includes("AI_SERVICE_URL is not configured") ||
                     error.message?.includes("fetch failed")) {

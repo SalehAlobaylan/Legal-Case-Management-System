@@ -77,16 +77,6 @@ function parseMatchExplanation(value: unknown): Record<string, unknown> {
   return {};
 }
 
-function buildCandidateContentText(
-  latestVersionContent: string | null | undefined,
-  summary: string | null | undefined,
-  title: string,
-  maxChars: number
-) {
-  const source = latestVersionContent || summary || title;
-  return source.slice(0, maxChars);
-}
-
 function serializeLinkForClient(
   link: any,
   isSubscribed?: boolean
@@ -184,6 +174,42 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         caseId,
         user.orgId
       );
+
+      if (env.CASE_LINK_REQUIRE_DOCS_READY) {
+        const minReadyDocs = Math.max(0, env.CASE_LINK_MIN_READY_DOCS);
+        const maxPendingDocs = Math.max(0, env.CASE_LINK_MAX_PENDING_DOCS);
+        const readiness = {
+          ready:
+            documentContext.meta.docsReady >= minReadyDocs &&
+            documentContext.meta.docsPending <= maxPendingDocs,
+          reason:
+            documentContext.meta.docsReady < minReadyDocs
+              ? "insufficient_ready_docs"
+              : documentContext.meta.docsPending > maxPendingDocs
+                ? "too_many_pending_docs"
+                : "ok",
+          details: documentContext.meta,
+        };
+
+        if (!readiness.ready) {
+          return reply.status(409).send({
+            message: "Case documents are not ready for high-confidence linking",
+            code: "case_documents_not_ready",
+            readiness,
+            generationMeta: {
+              ...documentContext.meta,
+              candidateCount: 0,
+              droppedByPrecision: 0,
+              regulationsIndexed: 0,
+              regulationsUnindexed: 0,
+              warnings: [
+                "case_documents_not_ready",
+                readiness.reason,
+              ],
+            },
+          });
+        }
+      }
       const caseFragments = [
         {
           fragment_id: "case:primary",
@@ -248,15 +274,6 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         topK: env.REG_LINK_PREFILTER_TOP_K,
         perRegulationLimit: env.REG_LINK_CANDIDATE_CHUNKS_PER_REG,
       });
-      const prefilterHealthy = !chunkRetrieval.warnings.includes(
-        "query_embedding_generation_failed"
-      );
-      const indexedCandidateLimit = prefilterHealthy ? 50 : 25;
-      const fallbackCandidateLimit = prefilterHealthy ? 10 : 5;
-      const candidateContentMaxChars = Math.max(
-        800,
-        Math.min(env.CASE_LINK_DOC_MAX_CHARS_PER_DOC, 3000)
-      );
       const bestChunkScoreByRegulationId = new Map<number, number>();
       for (const [regulationId, chunks] of chunkRetrieval.byRegulationId.entries()) {
         const best = chunks.reduce((max, item) => Math.max(max, item.score || 0), 0);
@@ -282,12 +299,10 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
           title: regulation.title,
           category: regulation.category,
           regulation_version_id: latestVersion?.id || null,
-          content_text: buildCandidateContentText(
-            latestVersion?.content,
-            regulation.summary,
+          content_text:
+            latestVersion?.content?.slice(0, env.CASE_LINK_DOC_TOTAL_MAX_CHARS) ||
+            regulation.summary ||
             regulation.title,
-            candidateContentMaxChars
-          ),
           candidate_chunks: versionChunks?.map((chunk) => ({
             chunk_id: chunk.chunkId,
             chunk_index: chunk.chunkIndex,
@@ -316,8 +331,8 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       const selectedCandidates = [
-        ...indexedCandidates.slice(0, indexedCandidateLimit),
-        ...fallbackCandidates.slice(0, fallbackCandidateLimit),
+        ...indexedCandidates.slice(0, 50),
+        ...fallbackCandidates.slice(0, 10),
       ];
 
       if (selectedCandidates.length === 0) {
@@ -329,18 +344,16 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
               title: regulation.title,
               category: regulation.category,
               regulation_version_id: latestVersion?.id || null,
-              content_text: buildCandidateContentText(
-                latestVersion?.content,
-                regulation.summary,
+              content_text:
+                latestVersion?.content?.slice(0, env.CASE_LINK_DOC_TOTAL_MAX_CHARS) ||
+                regulation.summary ||
                 regulation.title,
-                candidateContentMaxChars
-              ),
             } satisfies SimilarityRegulationCandidate;
           })
         );
       }
 
-      const matches = await aiService.findRelatedRegulations(
+      const aiResult = await aiService.findRelatedRegulations(
         primaryCaseText,
         selectedCandidates,
         {
@@ -369,6 +382,7 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
           },
         }
       );
+      const matches = aiResult.related_regulations || [];
       const fallbackUsed = selectedCandidates.some(
         (candidate) =>
           !candidate.candidate_chunks || candidate.candidate_chunks.length === 0
@@ -376,12 +390,50 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
       const generationWarnings = [
         ...new Set([
           ...chunkRetrieval.warnings,
-          ...(!prefilterHealthy
-            ? ["regulation_prefilter_unavailable_degraded_candidate_limits"]
-            : []),
+          ...(aiResult.pipeline_warnings || []),
           ...(fallbackUsed ? ["regulation_chunk_index_fallback_used"] : []),
         ]),
       ];
+
+      const scoreStats = matches.length
+        ? (() => {
+            const values = matches.map((item) => Number(item.similarity_score || 0));
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const avg = values.reduce((sum, item) => sum + item, 0) / values.length;
+            const variance =
+              values.reduce((sum, item) => sum + (item - avg) ** 2, 0) /
+              values.length;
+            return {
+              min: Number(min.toFixed(4)),
+              max: Number(max.toFixed(4)),
+              avg: Number(avg.toFixed(4)),
+              stddev: Number(Math.sqrt(variance).toFixed(4)),
+            };
+          })()
+        : {
+            min: 0,
+            max: 0,
+            avg: 0,
+            stddev: 0,
+          };
+
+      app.log.info(
+        {
+          caseId,
+          organizationId: user.orgId,
+          docsMeta: documentContext.meta,
+          candidates: {
+            selected: selectedCandidates.length,
+            indexed: regulationsIndexed,
+            unindexed: regulationsUnindexed,
+          },
+          scoreStats,
+          pipeline: aiResult.pipeline || "unknown",
+          pipelineWarnings: aiResult.pipeline_warnings || [],
+        },
+        "case_link_generation_metrics"
+      );
 
       const linkService = new LinkService(app.db);
       const links = await Promise.all(
@@ -397,7 +449,18 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
             matchExplanation: {
               lineMatches: match.line_matches || [],
               scoreBreakdown: match.score_breakdown || null,
-              warnings: match.warnings || [],
+              warnings: [...new Set([...(match.warnings || []), ...generationWarnings])],
+              diagnostics: {
+                raw_similarity_score: Number(
+                  Number(match.similarity_score || 0).toFixed(4)
+                ),
+                scoring_profile: {
+                  semantic_weight: env.CASE_LINK_WEIGHT_SEMANTIC,
+                  support_weight: env.CASE_LINK_WEIGHT_SUPPORT,
+                  lexical_weight: env.CASE_LINK_WEIGHT_LEXICAL,
+                  category_weight: env.CASE_LINK_WEIGHT_CATEGORY,
+                },
+              },
             },
             matchedWithDocuments: Boolean(
               (match.evidence || []).some(

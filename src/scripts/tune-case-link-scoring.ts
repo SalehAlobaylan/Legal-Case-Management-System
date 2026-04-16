@@ -446,7 +446,7 @@ async function run() {
       continue;
     }
 
-    const matches = await aiService.findRelatedRegulations(primaryCaseText, candidates, {
+    const result = await aiService.findRelatedRegulations(primaryCaseText, candidates, {
       topK: candidates.length,
       threshold: env.CASE_LINK_SUPPORT_FLOOR,
       strictMode: false,
@@ -477,6 +477,7 @@ async function run() {
         require_case_support: env.CASE_LINK_REQUIRE_CASE_SUPPORT,
       },
     });
+    const matches = result.related_regulations || [];
     const matchByRegulationId = new Map(matches.map((match) => [match.regulation_id, match]));
 
     for (const regulationId of candidateIds) {

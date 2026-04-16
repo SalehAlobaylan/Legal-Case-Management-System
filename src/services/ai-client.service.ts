@@ -65,9 +65,12 @@ export interface SimilarityEvidence {
 
 export interface SimilarityScoreBreakdown {
   semantic_max: number;
+  semantic_avg_top3?: number;
   support_coverage: number;
   lexical_overlap: number;
   category_prior: number;
+  evidence_quality?: number;
+  fallback_penalty?: number;
   final_score: number;
   has_case_support?: boolean;
   strong_support_count?: number;
@@ -100,6 +103,8 @@ export interface FindRelatedResponse {
   related_regulations: SimilarityMatch[];
   query_length?: number;
   candidates_count?: number;
+  pipeline?: string;
+  pipeline_warnings?: string[];
 }
 
 export interface ExtractRegulationInput {
@@ -454,7 +459,7 @@ export class AIClientService {
         enable_agentic?: boolean;
       };
     }
-  ): Promise<SimilarityMatch[]> {
+  ): Promise<FindRelatedResponse> {
     try {
       const topK = options?.topK ?? 10;
       const threshold = options?.threshold ?? 0.3;
@@ -477,7 +482,13 @@ export class AIClientService {
       }, "find-related", { timeoutMs: Math.max(this.timeoutMs, 120000) });
 
       const data = (await response.json()) as FindRelatedResponse;
-      return data.related_regulations ?? [];
+      return {
+        related_regulations: data.related_regulations ?? [],
+        query_length: data.query_length,
+        candidates_count: data.candidates_count,
+        pipeline: data.pipeline,
+        pipeline_warnings: data.pipeline_warnings,
+      };
     } catch (error) {
       logger.error(
         { err: error },
@@ -792,6 +803,8 @@ export interface CaseAnalysisResponse {
   summary: string;
   strengths: string[];
   weaknesses: string[];
+  risks?: string[];
+  recommendations?: string[];
   recommendedStrategy: string;
   successProbability: number;
   predictedTimeline: string;
@@ -807,7 +820,6 @@ export interface DocumentSummaryResponse {
     description: string;
   }[];
 }
-
 
 
 

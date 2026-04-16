@@ -8,6 +8,7 @@
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
     "worker:reg-monitor": "tsx src/workers/regulation-monitor.worker.ts",
+    "ai:evaluate:linking": "tsx src/scripts/evaluate-case-linking.ts",
     "backfill:reg-chunks": "tsx src/scripts/backfill-regulation-chunks.ts",
     "build": "tsc",
     "start:prod": "node dist/server.js",

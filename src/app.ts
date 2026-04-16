@@ -31,6 +31,7 @@ import settingsRoutes from "./routes/settings";
 import usersRoutes from "./routes/users";
 import billingRoutes from "./routes/billing";
 import aiRoutes from "./routes/ai";
+import aiEvaluationRoutes from "./routes/ai-evaluation";
 import caseDocumentsRoutes from "./routes/case-documents";
 import searchRoutes from "./routes/search";
 import intakeRoutes from "./routes/intake";
@@ -120,6 +121,7 @@ export function buildApp(opts = {}) {
   app.register(usersRoutes, { prefix: "/api/users/me" });
   app.register(billingRoutes, { prefix: "/api/billing" });
   app.register(aiRoutes, { prefix: "/api/ai" });
+  app.register(aiEvaluationRoutes, { prefix: "/api/ai-evaluation" });
   app.register(searchRoutes, { prefix: "/api/search" });
   app.register(intakeRoutes, { prefix: "/api/intake-forms" });
   app.register(publicIntakeRoutes, { prefix: "/api/public/intake" });
