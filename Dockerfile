@@ -42,4 +42,4 @@ RUN mkdir -p uploads
 EXPOSE 3000
 
 # Run database migrations then start the server
-CMD ["sh", "-c", "npx drizzle-kit migrate && node dist/server.js"]
+CMD ["sh", "-c", "./node_modules/.bin/drizzle-kit migrate && node dist/server.js"]
