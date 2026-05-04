@@ -236,7 +236,6 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
         userId: user.id,
         organizationId: user.orgId,
         regulationIds: validRegulationIds,
-        checkIntervalHours: 24,
         subscribedVia: "ai_dialog",
       });
 
@@ -266,7 +265,6 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
           properties: {
             regulationId: { type: "number" },
             sourceUrl: { type: "string" },
-            checkIntervalHours: { type: "number" },
           },
         },
       } as FastifySchema,
@@ -276,10 +274,9 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
         body: {
           regulationId: number;
           sourceUrl?: string;
-          checkIntervalHours?: number;
         };
       };
-      const { regulationId, sourceUrl, checkIntervalHours } = body;
+      const { regulationId, sourceUrl } = body;
 
       const subscriptionService = new RegulationSubscriptionService(app.db);
       const result = await subscriptionService.createOrUpdateSubscription({
@@ -287,7 +284,6 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
         organizationId: user.orgId,
         regulationId,
         sourceUrl,
-        checkIntervalHours,
         subscribedVia: "manual",
       });
 
@@ -401,6 +397,41 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
       const monitorService = new RegulationMonitorService(app.db);
       const runs = await monitorService.getRecentRuns(limit);
       return reply.send({ runs });
+    }
+  );
+
+  // GET /api/regulations/monitor/runs
+  // - Combined recent runs + health summary for the operator dashboard.
+  app.get(
+    "/monitor/runs",
+    {
+      schema: {
+        description: "Get recent regulation monitor runs and health summary",
+        tags: ["regulations"],
+        security: [{ bearerAuth: [] }],
+        querystring: {
+          type: "object",
+          properties: {
+            limit: { type: "number" },
+          },
+        },
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, query } = request as RequestWithUser & {
+        query: { limit?: string };
+      };
+      if (user.role !== "admin") {
+        return reply.status(403).send({ message: "Admin access required" });
+      }
+
+      const limit = query?.limit ? Number.parseInt(query.limit, 10) : 50;
+      const monitorService = new RegulationMonitorService(app.db);
+      const [runs, health] = await Promise.all([
+        monitorService.getRecentRuns(limit),
+        monitorService.getHealthSummary(),
+      ]);
+      return reply.send({ runs, health });
     }
   );
 

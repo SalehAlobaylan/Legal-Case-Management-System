@@ -40,7 +40,6 @@ const envSchema = z.object({
 
   AI_SERVICE_URL: z.string().url().optional(),
 
-  REG_MONITOR_ENABLED: envBoolean(true),
   REG_MONITOR_POLL_SECONDS: z.coerce.number().int().min(5).default(60),
   REG_MONITOR_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(5),
   REG_MONITOR_FAILURE_RETRY_MINUTES: z.coerce.number().int().min(1).default(30),
@@ -110,6 +109,9 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CALLBACK_URL: z.string().url().default("http://localhost:3000/api/auth/google/callback"),
   FRONTEND_URL: z.string().url().default("http://localhost:3001"),
+
+  // Integration credential encryption
+  INTEGRATION_CREDENTIALS_KEY: z.string().optional(),
 
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().optional(),

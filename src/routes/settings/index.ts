@@ -582,7 +582,8 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
         async (request: FastifyRequest, reply: FastifyReply) => {
             const { user } = request as RequestWithUser;
             const query = request.query as { limit?: string };
-            const limit = Math.min(parseInt(query.limit || "10"), 50);
+            const parsed = parseInt(query.limit || "10", 10);
+            const limit = Number.isNaN(parsed) ? 10 : Math.min(parsed, 50);
 
             const activity = await securityService.getLoginActivity(user.id, limit);
 

@@ -5,13 +5,13 @@ import {
   FastifyRequest,
   FastifySchema,
 } from "fastify";
-import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import type { Database } from "../../db/connection";
 import { DocumentService } from "../../services/document.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
 import { NotificationDeliveryService } from "../../services/notification-delivery.service";
+import { getStorageService } from "../../services/storage.service";
 import { getScopedClientIdForUser } from "../../lib/request-context";
 
 type RequestWithUser = FastifyRequest & {
@@ -33,10 +33,6 @@ type AuthenticatedFastifyInstance = FastifyInstance & {
   ) => void;
 };
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads";
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
 
 const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
@@ -124,24 +120,21 @@ const caseDocumentsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const ext = path.extname(data.filename);
       const uniqueName = `${randomUUID()}${ext}`;
-      const filePath = path.resolve(UPLOAD_DIR, uniqueName);
-      const writeStream = fs.createWriteStream(filePath);
 
-      await new Promise<void>((resolve, reject) => {
-        data.file.pipe(writeStream);
-        writeStream.on("finish", resolve);
-        writeStream.on("error", reject);
-        data.file.on("error", reject);
-      });
+      const chunks: Buffer[] = [];
+      for await (const chunk of data.file) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      await getStorageService().upload(uniqueName, buffer, data.mimetype);
 
-      const stats = fs.statSync(filePath);
       const documentService = new DocumentService(app.db);
       const document = await documentService.createDocument({
         caseId: caseIdNum,
         fileName: uniqueName,
         originalName: data.filename,
-        filePath,
-        fileSize: stats.size,
+        filePath: uniqueName,
+        fileSize: buffer.length,
         mimeType: data.mimetype,
         uploadedBy: user.id,
       });

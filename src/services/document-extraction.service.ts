@@ -1,7 +1,5 @@
 import { createHash } from "crypto";
-import * as fs from "fs";
-import { promises as fsPromises } from "fs";
-import * as path from "path";
+import { getStorageService } from "./storage.service";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import { env } from "../config/env";
@@ -108,29 +106,6 @@ export class DocumentExtractionService {
 
   private hashBuffer(buffer: Buffer): string {
     return createHash("sha256").update(buffer).digest("hex");
-  }
-
-  private resolveDocumentPath(filePath: string): string | null {
-    if (!filePath) {
-      return null;
-    }
-
-    if (path.isAbsolute(filePath)) {
-      return fs.existsSync(filePath) ? filePath : null;
-    }
-
-    const candidates = [
-      path.resolve(process.cwd(), filePath),
-      path.resolve(__dirname, "..", "..", filePath),
-    ];
-
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    return null;
   }
 
   private getRetryAt(base: Date): Date {
@@ -382,10 +357,11 @@ export class DocumentExtractionService {
     options?: { force?: boolean }
   ): Promise<{ queued: boolean }> {
     let fileHash: string | null = null;
-    const resolvedFilePath = this.resolveDocumentPath(document.filePath);
-    if (resolvedFilePath) {
-      const fileBuffer = await fsPromises.readFile(resolvedFilePath);
+    try {
+      const fileBuffer = await getStorageService().download(document.filePath);
       fileHash = this.hashBuffer(fileBuffer);
+    } catch {
+      // File not yet available; hash stays null
     }
 
     const existing = await this.db.query.documentExtractions.findFirst({
@@ -909,14 +885,19 @@ export class DocumentExtractionService {
       },
     });
 
-    const resolvedFilePath = document
-      ? this.resolveDocumentPath(document.filePath)
-      : null;
+    let fileContent: Buffer | null = null;
+    if (document) {
+      try {
+        fileContent = await getStorageService().download(document.filePath);
+      } catch {
+        fileContent = null;
+      }
+    }
 
-    if (!document || !resolvedFilePath) {
+    if (!document || !fileContent) {
       logger.warn(
-        { documentId: row.documentId, document: document ? { id: document.id, filePath: document.filePath } : null, resolvedFilePath },
-        "processSingleExtraction: file_missing — document or resolvedFilePath is null"
+        { documentId: row.documentId, document: document ? { id: document.id, filePath: document.filePath } : null },
+        "processSingleExtraction: file_missing — document or file content is null"
       );
       await this.db
         .update(documentExtractions)
@@ -951,7 +932,7 @@ export class DocumentExtractionService {
       .where(eq(documentExtractions.id, row.id));
 
     try {
-      const content = await fsPromises.readFile(resolvedFilePath);
+      const content = fileContent!;
       const fileHash = this.hashBuffer(content);
       const extraction = await this.getAIClient().extractDocumentContent({
         content,

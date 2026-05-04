@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import {
   regulationMonitorRuns,
@@ -35,18 +35,14 @@ export interface RegulationMonitorHealthSummary {
   successfulRuns24h: number;
 }
 
-interface SubscriptionGroup {
-  regulationId: number;
+interface DueRegulation {
+  id: number;
   sourceUrl: string;
-  subscriptions: Array<{
-    id: number;
-    userId: string;
-    organizationId: number;
-    checkIntervalHours: number;
-    lastEtag: string | null;
-    lastModified: Date | null;
-    lastContentHash: string | null;
-  }>;
+  checkIntervalHours: number;
+  lastEtag: string | null;
+  lastModified: Date | null;
+  lastContentHash: string | null;
+  consecutiveFailures: number;
 }
 
 export class RegulationMonitorService {
@@ -143,78 +139,67 @@ export class RegulationMonitorService {
     });
   }
 
-  private async getDueSubscriptionGroups(
+  private async getDueRegulations(
     now: Date,
     regulationId?: number
-  ): Promise<SubscriptionGroup[]> {
+  ): Promise<DueRegulation[]> {
     const whereConditions = [
-      eq(regulationSubscriptions.isActive, true),
-      lte(regulationSubscriptions.nextCheckAt, now),
+      eq(regulations.monitoringEnabled, true),
+      isNotNull(regulations.sourceUrl),
+      lte(regulations.nextCheckAt, now),
     ];
 
     if (typeof regulationId === "number") {
-      whereConditions.push(eq(regulationSubscriptions.regulationId, regulationId));
+      whereConditions.push(eq(regulations.id, regulationId));
     }
 
-    const rows = await this.db.query.regulationSubscriptions.findMany({
+    const rows = await this.db.query.regulations.findMany({
       where: and(...whereConditions),
       columns: {
         id: true,
-        userId: true,
-        organizationId: true,
-        regulationId: true,
         sourceUrl: true,
         checkIntervalHours: true,
         lastEtag: true,
         lastModified: true,
         lastContentHash: true,
+        consecutiveFailures: true,
       },
-      orderBy: (table, { asc }) => [
-        asc(table.nextCheckAt),
-        asc(table.regulationId),
-      ],
+      orderBy: (table, { asc }) => [asc(table.nextCheckAt), asc(table.id)],
     });
 
-    const grouped = new Map<string, SubscriptionGroup>();
-    for (const row of rows) {
-      const key = `${row.regulationId}::${row.sourceUrl}`;
-      const existing = grouped.get(key);
-      if (existing) {
-        existing.subscriptions.push(row);
-        continue;
-      }
-
-      grouped.set(key, {
-        regulationId: row.regulationId,
-        sourceUrl: row.sourceUrl,
-        subscriptions: [row],
-      });
-    }
-
-    return [...grouped.values()];
+    return rows
+      .filter((row): row is DueRegulation & { sourceUrl: string } =>
+        Boolean(row.sourceUrl)
+      )
+      .map((row) => ({
+        id: row.id,
+        sourceUrl: row.sourceUrl as string,
+        checkIntervalHours: row.checkIntervalHours,
+        lastEtag: row.lastEtag,
+        lastModified: row.lastModified,
+        lastContentHash: row.lastContentHash,
+        consecutiveFailures: row.consecutiveFailures,
+      }));
   }
 
-  private async markSubscriptionsFailed(
-    group: SubscriptionGroup,
+  private async markRegulationFailed(
+    regulation: DueRegulation,
     now: Date
   ): Promise<void> {
     const retryAt = this.getRetryAt(now);
-    await Promise.all(
-      group.subscriptions.map((subscription) =>
-        this.db
-          .update(regulationSubscriptions)
-          .set({
-            lastCheckedAt: now,
-            nextCheckAt: retryAt,
-            updatedAt: now,
-          })
-          .where(eq(regulationSubscriptions.id, subscription.id))
-      )
-    );
+    await this.db
+      .update(regulations)
+      .set({
+        lastCheckedAt: now,
+        nextCheckAt: retryAt,
+        consecutiveFailures: regulation.consecutiveFailures + 1,
+        updatedAt: now,
+      })
+      .where(eq(regulations.id, regulation.id));
   }
 
-  private async markSubscriptionsChecked(
-    group: SubscriptionGroup,
+  private async markRegulationChecked(
+    regulation: DueRegulation,
     now: Date,
     data: {
       etag?: string | null;
@@ -222,32 +207,30 @@ export class RegulationMonitorService {
       contentHash?: string | null;
     }
   ): Promise<void> {
-    await Promise.all(
-      group.subscriptions.map((subscription) =>
-        this.db
-          .update(regulationSubscriptions)
-          .set({
-            lastCheckedAt: now,
-            lastEtag: data.etag ?? subscription.lastEtag,
-            lastModified: data.lastModified ?? subscription.lastModified,
-            lastContentHash: data.contentHash ?? subscription.lastContentHash,
-            nextCheckAt: this.getNextCheckAt(now, subscription.checkIntervalHours),
-            updatedAt: now,
-          })
-          .where(eq(regulationSubscriptions.id, subscription.id))
-      )
-    );
+    await this.db
+      .update(regulations)
+      .set({
+        lastCheckedAt: now,
+        lastEtag: data.etag ?? regulation.lastEtag,
+        lastModified: data.lastModified ?? regulation.lastModified,
+        lastContentHash: data.contentHash ?? regulation.lastContentHash,
+        nextCheckAt: this.getNextCheckAt(now, regulation.checkIntervalHours),
+        consecutiveFailures: 0,
+        updatedAt: now,
+      })
+      .where(eq(regulations.id, regulation.id));
   }
 
   private async createRegulationVersion(
-    group: SubscriptionGroup,
+    regulationId: number,
     content: string,
     contentHash: string,
     rawHtml: string | null,
-    now: Date
+    now: Date,
+    isFirstVersion: boolean
   ): Promise<{ id: number; versionNumber: number }> {
     const latestVersion = await this.db.query.regulationVersions.findFirst({
-      where: eq(regulationVersions.regulationId, group.regulationId),
+      where: eq(regulationVersions.regulationId, regulationId),
       columns: {
         id: true,
         versionNumber: true,
@@ -259,12 +242,14 @@ export class RegulationMonitorService {
     const [version] = await this.db
       .insert(regulationVersions)
       .values({
-        regulationId: group.regulationId,
+        regulationId,
         versionNumber: nextVersionNumber,
         content,
         contentHash,
         rawHtml,
-        changesSummary: "Detected automatic source content change.",
+        changesSummary: isFirstVersion
+          ? "Initial captured baseline from source."
+          : "Detected automatic source content change.",
         createdBy: "monitor_worker",
       })
       .returning({
@@ -272,13 +257,15 @@ export class RegulationMonitorService {
         versionNumber: regulationVersions.versionNumber,
       });
 
-    await this.db
-      .update(regulations)
-      .set({
-        updatedAt: now,
-        status: "amended",
-      })
-      .where(eq(regulations.id, group.regulationId));
+    if (!isFirstVersion) {
+      await this.db
+        .update(regulations)
+        .set({
+          updatedAt: now,
+          status: "amended",
+        })
+        .where(eq(regulations.id, regulationId));
+    }
 
     return version;
   }
@@ -343,41 +330,39 @@ export class RegulationMonitorService {
     }
   }
 
-  private async processGroup(
-    group: SubscriptionGroup,
+  private async processRegulation(
+    regulation: DueRegulation,
     now: Date,
     dryRun: boolean
   ): Promise<{ changed: boolean; createdVersion: boolean; failed: boolean }> {
     if (!this.aiClient) {
       logger.warn(
-        { regulationId: group.regulationId, sourceUrl: group.sourceUrl },
+        { regulationId: regulation.id, sourceUrl: regulation.sourceUrl },
         "Skipping regulation extraction - AI_SERVICE_URL not configured"
       );
       return { changed: false, createdVersion: false, failed: true };
     }
 
-    const representative = group.subscriptions[0];
-
     let extraction;
     try {
       extraction = await this.aiClient.extractRegulationContent({
-        sourceUrl: group.sourceUrl,
-        ifNoneMatch: representative.lastEtag,
-        ifModifiedSince: representative.lastModified
-          ? representative.lastModified.toUTCString()
+        sourceUrl: regulation.sourceUrl,
+        ifNoneMatch: regulation.lastEtag,
+        ifModifiedSince: regulation.lastModified
+          ? regulation.lastModified.toUTCString()
           : null,
       });
     } catch (error) {
       logger.error(
         {
           err: error,
-          regulationId: group.regulationId,
-          sourceUrl: group.sourceUrl,
+          regulationId: regulation.id,
+          sourceUrl: regulation.sourceUrl,
         },
         "Regulation monitor extraction call failed"
       );
       if (!dryRun) {
-        await this.markSubscriptionsFailed(group, now);
+        await this.markRegulationFailed(regulation, now);
       }
       return { changed: false, createdVersion: false, failed: true };
     }
@@ -385,15 +370,15 @@ export class RegulationMonitorService {
     if (extraction.status === "error") {
       logger.warn(
         {
-          regulationId: group.regulationId,
-          sourceUrl: group.sourceUrl,
+          regulationId: regulation.id,
+          sourceUrl: regulation.sourceUrl,
           errorCode: extraction.error_code,
           warnings: extraction.warnings,
         },
         "Regulation monitor received extraction error status"
       );
       if (!dryRun) {
-        await this.markSubscriptionsFailed(group, now);
+        await this.markRegulationFailed(regulation, now);
       }
       return { changed: false, createdVersion: false, failed: true };
     }
@@ -402,9 +387,9 @@ export class RegulationMonitorService {
 
     if (extraction.status === "not_modified") {
       if (!dryRun) {
-        await this.markSubscriptionsChecked(group, now, {
-          etag: extraction.etag || representative.lastEtag,
-          lastModified: parsedLastModified || representative.lastModified,
+        await this.markRegulationChecked(regulation, now, {
+          etag: extraction.etag || regulation.lastEtag,
+          lastModified: parsedLastModified || regulation.lastModified,
         });
       }
       return { changed: false, createdVersion: false, failed: false };
@@ -413,15 +398,16 @@ export class RegulationMonitorService {
     const extractedText = this.normalizeText(extraction.extracted_text || "");
     if (!extractedText) {
       if (!dryRun) {
-        await this.markSubscriptionsFailed(group, now);
+        await this.markRegulationFailed(regulation, now);
       }
       return { changed: false, createdVersion: false, failed: true };
     }
 
     const extractedHash =
       extraction.normalized_text_hash || this.hashText(extractedText);
+
     const latestVersion = await this.db.query.regulationVersions.findFirst({
-      where: eq(regulationVersions.regulationId, group.regulationId),
+      where: eq(regulationVersions.regulationId, regulation.id),
       columns: {
         id: true,
         versionNumber: true,
@@ -430,12 +416,14 @@ export class RegulationMonitorService {
       orderBy: [desc(regulationVersions.versionNumber)],
     });
 
-    const changed = latestVersion?.contentHash !== extractedHash;
+    const isFirstVersion = !latestVersion;
+    const changed =
+      isFirstVersion || latestVersion?.contentHash !== extractedHash;
 
     if (!dryRun) {
-      await this.markSubscriptionsChecked(group, now, {
-        etag: extraction.etag || representative.lastEtag,
-        lastModified: parsedLastModified || representative.lastModified,
+      await this.markRegulationChecked(regulation, now, {
+        etag: extraction.etag || regulation.lastEtag,
+        lastModified: parsedLastModified || regulation.lastModified,
         contentHash: extractedHash,
       });
     }
@@ -449,18 +437,22 @@ export class RegulationMonitorService {
     }
 
     const version = await this.createRegulationVersion(
-      group,
+      regulation.id,
       extractedText,
       extractedHash,
       extraction.raw_html || null,
-      now
+      now,
+      isFirstVersion
     );
-    await this.notifySubscribers(
-      group.regulationId,
-      version.id,
-      version.versionNumber,
-      now
-    );
+
+    if (!isFirstVersion) {
+      await this.notifySubscribers(
+        regulation.id,
+        version.id,
+        version.versionNumber,
+        now
+      );
+    }
 
     return { changed: true, createdVersion: true, failed: false };
   }
@@ -496,23 +488,32 @@ export class RegulationMonitorService {
     const startedAt = Date.now();
     try {
       const now = new Date();
-      const groups = await this.getDueSubscriptionGroups(now, options.regulationId);
+      const dueRegulations = await this.getDueRegulations(now, options.regulationId);
       const result: RegulationMonitorRunResult = {
-        scanned: groups.length,
+        scanned: dueRegulations.length,
         changed: 0,
         versionsCreated: 0,
         failed: 0,
       };
 
-      if (groups.length === 0) {
+      if (dueRegulations.length === 0) {
+        await this.persistRun({
+          startedAt: startedAtDate,
+          finishedAt: new Date(),
+          status: "success",
+          triggerSource,
+          triggeredByUserId: options.triggeredByUserId,
+          dryRun,
+          result,
+        });
         return result;
       }
 
       const concurrency = Math.max(1, env.REG_MONITOR_MAX_CONCURRENCY);
-      for (let index = 0; index < groups.length; index += concurrency) {
-        const batch = groups.slice(index, index + concurrency);
+      for (let index = 0; index < dueRegulations.length; index += concurrency) {
+        const batch = dueRegulations.slice(index, index + concurrency);
         const batchResults = await Promise.all(
-          batch.map((group) => this.processGroup(group, now, Boolean(options.dryRun)))
+          batch.map((regulation) => this.processRegulation(regulation, now, dryRun))
         );
 
         for (const item of batchResults) {

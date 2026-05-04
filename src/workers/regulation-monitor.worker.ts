@@ -12,11 +12,6 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 let running = true;
 
 async function main() {
-  if (!env.REG_MONITOR_ENABLED) {
-    logger.info("Regulation monitor worker is disabled via REG_MONITOR_ENABLED=false");
-    return;
-  }
-
   const monitorService = new RegulationMonitorService(db);
   const sourceService = new RegulationSourceService(db);
   const documentExtractionService = new DocumentExtractionService(db);

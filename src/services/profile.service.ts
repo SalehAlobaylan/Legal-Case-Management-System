@@ -16,8 +16,8 @@ import {
   userActivities,
   userAchievements,
 } from "../db/schema";
-import * as fs from "fs";
 import * as path from "path";
+import { getStorageService } from "./storage.service";
 
 export interface UserProfile {
   id: string;
@@ -268,30 +268,16 @@ export class ProfileService {
     fileBuffer: Buffer,
     filename: string
   ): Promise<string> {
-    // Create avatars directory if it doesn't exist
-    const avatarsDir = path.join(process.cwd(), "uploads", "avatars");
-    if (!fs.existsSync(avatarsDir)) {
-      fs.mkdirSync(avatarsDir, { recursive: true });
-    }
-
-    // Generate unique filename
     const ext = path.extname(filename);
     const newFilename = `${userId}-${Date.now()}${ext}`;
-    const filePath = path.join(avatarsDir, newFilename);
-
-    // Save file
-    fs.writeFileSync(filePath, fileBuffer);
-
-    // Update user's avatar URL
-    const avatarUrl = `/avatars/${newFilename}`;
+    const key = `avatars/${newFilename}`;
+    const storage = getStorageService();
+    await storage.upload(key, fileBuffer, "image/jpeg");
+    const avatarUrl = storage.getPublicUrl(key);
     await this.db
       .update(users)
-      .set({
-        avatarUrl,
-        updatedAt: new Date(),
-      })
+      .set({ avatarUrl, updatedAt: new Date() })
       .where(eq(users.id, userId));
-
     return avatarUrl;
   }
 

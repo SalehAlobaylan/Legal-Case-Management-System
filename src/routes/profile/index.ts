@@ -30,10 +30,8 @@ import { organizations } from "../../db/schema/organizations";
 import { eq, and, desc, sql, count, isNotNull, inArray, gt, lt, gte } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { z } from "zod";
-import * as fs from "fs";
-import * as path from "path";
 import { randomUUID } from "crypto";
-import { pipeline } from "stream/promises";
+import { getStorageService } from "../../services/storage.service";
 
 type RequestWithUser = FastifyRequest & {
     user: {
@@ -47,12 +45,6 @@ type RequestWithUser = FastifyRequest & {
 type AuthenticatedFastifyInstance = FastifyInstance & {
     authenticate: (request: FastifyRequest) => Promise<void>;
 };
-
-const AVATAR_UPLOAD_DIR = process.env.AVATAR_UPLOAD_DIR || "./uploads/avatars";
-
-if (!fs.existsSync(AVATAR_UPLOAD_DIR)) {
-    fs.mkdirSync(AVATAR_UPLOAD_DIR, { recursive: true });
-}
 
 const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -269,11 +261,17 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
 
             const ext = data.filename.split(".").pop() || "jpg";
             const filename = `${user.id}-${randomUUID()}.${ext}`;
-            const filepath = path.join(AVATAR_UPLOAD_DIR, filename);
+            const key = `avatars/${filename}`;
 
-            await pipeline(data.file, fs.createWriteStream(filepath));
+            const chunks: Buffer[] = [];
+            for await (const chunk of data.file) {
+              chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            }
+            const buffer = Buffer.concat(chunks);
+            const storage = getStorageService();
+            await storage.upload(key, buffer, data.mimetype);
 
-            const avatarUrl = `/uploads/avatars/${filename}`;
+            const avatarUrl = storage.getPublicUrl(key);
 
             await db
                 .update(users)

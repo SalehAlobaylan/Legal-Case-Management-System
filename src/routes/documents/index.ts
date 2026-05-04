@@ -16,8 +16,8 @@ import {
 import { DocumentService } from "../../services/document.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
 import { NotificationDeliveryService } from "../../services/notification-delivery.service";
+import { getStorageService } from "../../services/storage.service";
 import type { Database } from "../../db/connection";
-import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import { getScopedClientIdForUser } from "../../lib/request-context";
@@ -41,13 +41,6 @@ type AuthenticatedFastifyInstance = FastifyInstance & {
   ) => void;
 };
 
-// Configure upload directory (can be overridden via env)
-const UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads";
-
-// Ensure upload directory exists
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
 
 const documentsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
@@ -198,28 +191,24 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       // Generate unique filename
       const ext = path.extname(data.filename);
       const uniqueName = `${randomUUID()}${ext}`;
-      const filePath = path.resolve(UPLOAD_DIR, uniqueName);
 
-      // Save file to disk
-      const writeStream = fs.createWriteStream(filePath);
-      await new Promise<void>((resolve, reject) => {
-        data.file.pipe(writeStream);
-        writeStream.on("finish", resolve);
-        writeStream.on("error", reject);
-        data.file.on("error", reject);
-      });
+      // Buffer the stream and upload to storage
+      const chunks: Buffer[] = [];
+      for await (const chunk of data.file) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      const storage = getStorageService();
+      await storage.upload(uniqueName, buffer, data.mimetype);
 
-      // Get file size after write
-      const stats = fs.statSync(filePath);
-
-      // Save metadata to database
+      // Save metadata to database — filePath stores the storage key
       const documentService = new DocumentService(app.db);
       const document = await documentService.createDocument({
         caseId: caseIdNum,
         fileName: uniqueName,
         originalName: data.filename,
-        filePath: filePath,
-        fileSize: stats.size,
+        filePath: uniqueName,
+        fileSize: buffer.length,
         mimeType: data.mimetype,
         uploadedBy: user.id,
       });
@@ -259,14 +248,16 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       scopedClientId
     );
 
-    if (!fs.existsSync(document.filePath)) {
-      return reply.status(404).send({ message: "File not found on disk" });
+    let fileBuffer: Buffer;
+    try {
+      fileBuffer = await getStorageService().download(document.filePath);
+    } catch {
+      return reply.status(404).send({ message: "File not found" });
     }
 
     reply.header("Content-Disposition", `attachment; filename="${document.originalName}"`);
     reply.header("Content-Type", document.mimeType || "application/octet-stream");
-    const stream = fs.createReadStream(document.filePath);
-    return reply.send(stream);
+    return reply.send(fileBuffer);
   };
 
   /**
@@ -350,10 +341,7 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       const documentService = new DocumentService(app.db);
       const document = await documentService.deleteDocument(docId, user.orgId);
 
-      // Delete file from disk if it exists
-      if (fs.existsSync(document.filePath)) {
-        fs.unlinkSync(document.filePath);
-      }
+      await getStorageService().delete(document.filePath);
 
       await notificationDelivery.notifyOrganization({
         organizationId: user.orgId,

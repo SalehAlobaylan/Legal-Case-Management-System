@@ -23,6 +23,7 @@ import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
+import { getStorageService, resolveStorageKey } from "../../services/storage.service";
 import { AutomationEngineService } from "../../services/automation-engine.service";
 import { getScopedClientIdForUser } from "../../lib/request-context";
 
@@ -69,11 +70,6 @@ const updateClientSchema = createClientSchema.partial();
 const clientsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
   const automationEngine = new AutomationEngineService(app.db);
-  const CLIENT_UPLOAD_DIR = process.env.UPLOAD_DIR || "./uploads/client-documents";
-  if (!fs.existsSync(CLIENT_UPLOAD_DIR)) {
-    fs.mkdirSync(CLIENT_UPLOAD_DIR, { recursive: true });
-  }
-
   // All routes require authentication
   app.addHook("onRequest", app.authenticate);
 
@@ -210,25 +206,24 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: "No file uploaded" });
       }
 
-      const ext = path.extname(file.filename);
+      const ext = file.filename.includes(".") ? `.${file.filename.split(".").pop()}` : "";
       const storedName = `${randomUUID()}${ext}`;
-      const filePath = path.resolve(CLIENT_UPLOAD_DIR, storedName);
-      const writeStream = fs.createWriteStream(filePath);
+      const key = `client-documents/${storedName}`;
 
-      await new Promise<void>((resolve, reject) => {
-        file.file.pipe(writeStream);
-        writeStream.on("finish", resolve);
-        writeStream.on("error", reject);
-        file.file.on("error", reject);
-      });
+      const chunks: Buffer[] = [];
+      for await (const chunk of file.file) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      const storage = getStorageService();
+      await storage.upload(key, buffer, file.mimetype);
 
-      const stat = fs.statSync(filePath);
       const clientService = new ClientService(app.db);
       const document = await clientService.createClientDocument(clientId, user.orgId, {
         name: file.filename,
-        fileUrl: `/uploads/client-documents/${storedName}`,
+        fileUrl: storage.getPublicUrl(key),
         fileType: file.mimetype,
-        fileSize: stat.size,
+        fileSize: buffer.length,
         uploadedById: user.id,
       });
 
@@ -263,11 +258,8 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       const clientService = new ClientService(app.db);
       const deleted = await clientService.deleteClientDocument(clientId, documentId, user.orgId);
 
-      if (deleted.fileUrl.startsWith("/uploads/client-documents/")) {
-        const absolute = path.resolve(CLIENT_UPLOAD_DIR, path.basename(deleted.fileUrl));
-        if (fs.existsSync(absolute)) {
-          fs.unlinkSync(absolute);
-        }
+      if (deleted.fileUrl) {
+        await getStorageService().delete(resolveStorageKey(deleted.fileUrl));
       }
 
       return reply.code(204).send();
@@ -305,19 +297,16 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ message: "Document not found" });
       }
 
-      if (!doc.fileUrl.startsWith("/uploads/client-documents/")) {
-        return reply.status(422).send({ message: "Unsupported file location" });
-      }
-
-      const absolute = path.resolve(CLIENT_UPLOAD_DIR, path.basename(doc.fileUrl));
-      if (!fs.existsSync(absolute)) {
+      let fileBuffer: Buffer;
+      try {
+        fileBuffer = await getStorageService().download(resolveStorageKey(doc.fileUrl));
+      } catch {
         return reply.status(404).send({ message: "File not found" });
       }
 
       reply.header("Content-Disposition", `attachment; filename="${doc.name}"`);
       reply.header("Content-Type", doc.fileType || "application/octet-stream");
-      const stream = fs.createReadStream(absolute);
-      return reply.send(stream);
+      return reply.send(fileBuffer);
     }
   );
 

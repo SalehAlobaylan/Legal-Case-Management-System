@@ -5,10 +5,57 @@ import {
   timestamp,
   varchar,
   jsonb,
+  text,
+  boolean,
   index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { organizations } from "./organizations";
+
+export type IntakeFieldDef = {
+  id: string;
+  label: string;
+  type:
+    | "text"
+    | "email"
+    | "phone"
+    | "textarea"
+    | "select"
+    | "checkbox"
+    | "radio"
+    | "date";
+  required?: boolean;
+  placeholder?: string;
+  options?: { value: string; label: string }[];
+};
+
+export type IntakeFormSection = {
+  id: string;
+  titleEn?: string;
+  titleAr?: string;
+  layout?: "single" | "double" | "triple";
+  order: number;
+  fieldIds: string[];
+};
+
+export type IntakeFormTheme = {
+  primaryColor: string;
+  borderRadius: number;
+  layoutDensity: "comfortable" | "compact" | "spacious";
+};
+
+export type IntakeFormLogicRule = {
+  id: string;
+  conditions: { fieldId: string; operator: string; value: string }[];
+  action: "show" | "hide" | "require";
+  targetFieldIds: string[];
+};
+
+export type IntakeFormSchema = {
+  sections: IntakeFormSection[];
+  logicRules: IntakeFormLogicRule[];
+  theme?: IntakeFormTheme;
+};
 
 export const intakeForms = pgTable(
   "intake_forms",
@@ -18,7 +65,11 @@ export const intakeForms = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" })
       .notNull(),
     title: varchar("title", { length: 255 }).notNull(),
-    fieldsJson: jsonb("fields_json").$type<Record<string, unknown>[]>().default([]).notNull(),
+    description: text("description"),
+    fieldsJson: jsonb("fields_json").$type<IntakeFieldDef[]>().default([]).notNull(),
+    schema: jsonb("schema").$type<IntakeFormSchema | null>(),
+    isActive: boolean("is_active").default(true).notNull(),
+    deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

@@ -8,6 +8,8 @@ import {
   index,
   uniqueIndex,
   jsonb,
+  boolean,
+  integer,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -51,6 +53,14 @@ export const regulations = pgTable(
       .default("active")
       .notNull(),
     effectiveDate: date("effective_date"),
+    monitoringEnabled: boolean("monitoring_enabled").default(true).notNull(),
+    checkIntervalHours: integer("check_interval_hours").default(24).notNull(),
+    lastCheckedAt: timestamp("last_checked_at"),
+    lastContentHash: varchar("last_content_hash", { length: 64 }),
+    lastEtag: text("last_etag"),
+    lastModified: timestamp("last_modified"),
+    nextCheckAt: timestamp("next_check_at").defaultNow().notNull(),
+    consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -62,6 +72,10 @@ export const regulations = pgTable(
     sourceProviderSerialUniqueIdx: uniqueIndex("regulations_source_provider_serial_uidx")
       .on(table.sourceProvider, table.sourceSerial)
       .where(sql`${table.sourceSerial} is not null`),
+    monitoringDueIdx: index("regulations_monitoring_due_idx").on(
+      table.monitoringEnabled,
+      table.nextCheckAt
+    ),
   })
 );
 

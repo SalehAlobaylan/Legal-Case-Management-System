@@ -6,7 +6,8 @@
   "scripts": {
     "predev": "npm run db:migrate && npm run db:seed",
     "start": "tsx src/server.ts",
-    "dev": "tsx watch src/server.ts",
+    "dev": "concurrently -n api,worker -c blue,green \"tsx watch src/server.ts\" \"tsx watch src/workers/regulation-monitor.worker.ts\"",
+    "dev:api": "tsx watch src/server.ts",
     "worker:reg-monitor": "tsx src/workers/regulation-monitor.worker.ts",
     "ai:evaluate:linking": "tsx src/scripts/evaluate-case-linking.ts",
     "backfill:reg-chunks": "tsx src/scripts/backfill-regulation-chunks.ts",
@@ -24,6 +25,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1039.0",
+    "@aws-sdk/lib-storage": "^3.1039.0",
     "@fastify/cors": "^11.1.0",
     "@fastify/helmet": "^12.0.0",
     "@fastify/jwt": "^10.0.0",
@@ -62,6 +65,7 @@
     "@types/passport-google-oauth20": "^2.0.17",
     "@types/pdfkit": "^0.17.5",
     "@types/ws": "^8.5.12",
+    "concurrently": "^9.2.1",
     "jest": "^29.7.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",

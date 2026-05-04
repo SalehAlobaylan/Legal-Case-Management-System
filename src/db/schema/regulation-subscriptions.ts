@@ -2,7 +2,6 @@ import {
   pgTable,
   serial,
   integer,
-  text,
   boolean,
   timestamp,
   index,
@@ -28,14 +27,7 @@ export const regulationSubscriptions = pgTable(
     regulationId: integer("regulation_id")
       .references(() => regulations.id, { onDelete: "cascade" })
       .notNull(),
-    sourceUrl: text("source_url").notNull(),
-    checkIntervalHours: integer("check_interval_hours").default(24).notNull(),
     isActive: boolean("is_active").default(true).notNull(),
-    lastCheckedAt: timestamp("last_checked_at"),
-    lastEtag: text("last_etag"),
-    lastModified: timestamp("last_modified"),
-    lastContentHash: varchar("last_content_hash", { length: 64 }),
-    nextCheckAt: timestamp("next_check_at").defaultNow().notNull(),
     subscribedVia: varchar("subscribed_via", { length: 50 })
       .default("manual")
       .notNull(),
@@ -47,10 +39,9 @@ export const regulationSubscriptions = pgTable(
       table.userId,
       table.regulationId
     ),
-    orgActiveNextIdx: index("reg_sub_org_active_next_idx").on(
+    orgActiveIdx: index("reg_sub_org_active_idx").on(
       table.organizationId,
-      table.isActive,
-      table.nextCheckAt
+      table.isActive
     ),
     regulationIdx: index("reg_sub_regulation_idx").on(table.regulationId),
   })

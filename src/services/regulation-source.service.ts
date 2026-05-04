@@ -1560,6 +1560,8 @@ export class RegulationSourceService {
           jurisdiction: "Kingdom of Saudi Arabia",
           status: candidate.status || "active",
           effectiveDate: candidate.effectiveDate || null,
+          monitoringEnabled: true,
+          nextCheckAt: now,
           updatedAt: now,
         })
         .returning({ id: regulations.id });
@@ -1599,6 +1601,7 @@ export class RegulationSourceService {
         category: candidate.category,
         status: candidate.status || existing.status,
         effectiveDate: candidate.effectiveDate || null,
+        nextCheckAt: now,
         updatedAt: now,
       })
       .where(eq(regulations.id, existing.id));

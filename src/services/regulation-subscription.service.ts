@@ -26,7 +26,6 @@ interface SubscribeInput {
   organizationId: number;
   regulationId: number;
   sourceUrl?: string;
-  checkIntervalHours?: number;
   subscribedVia?: string;
 }
 
@@ -109,8 +108,6 @@ export class RegulationSubscriptionService {
     }
 
     const now = new Date();
-    const interval = Math.max(1, input.checkIntervalHours || 24);
-    const nextCheckAt = new Date(now.getTime() + interval * 60 * 60 * 1000);
 
     const [subscription] = await this.db
       .insert(regulationSubscriptions)
@@ -118,11 +115,8 @@ export class RegulationSubscriptionService {
         userId: input.userId,
         organizationId: input.organizationId,
         regulationId: input.regulationId,
-        sourceUrl: source.sourceUrl,
-        checkIntervalHours: interval,
         isActive: true,
         subscribedVia: input.subscribedVia || "manual",
-        nextCheckAt,
         updatedAt: now,
       })
       .onConflictDoUpdate({
@@ -131,11 +125,8 @@ export class RegulationSubscriptionService {
           regulationSubscriptions.regulationId,
         ],
         set: {
-          sourceUrl: source.sourceUrl,
-          checkIntervalHours: interval,
           isActive: true,
           subscribedVia: input.subscribedVia || "manual",
-          nextCheckAt,
           updatedAt: now,
         },
       })

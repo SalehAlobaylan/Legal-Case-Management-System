@@ -66,7 +66,6 @@ Set required environment variables (e.g., `DATABASE_URL`, `JWT_SECRET`) before s
 - `PORT` / `HOST`: server bind options (defaults 3000 / 0.0.0.0)
 - `CORS_ORIGIN`: allowed origins (comma-separated)
 - `AI_SERVICE_URL` (optional): external AI microservice
-- `REG_MONITOR_ENABLED`: enable/disable monitoring worker loop
 - `REG_MONITOR_POLL_SECONDS`: worker polling interval
 - `REG_MONITOR_MAX_CONCURRENCY`: concurrent source checks per cycle
 - `REG_MONITOR_FAILURE_RETRY_MINUTES`: retry delay for failed checks
