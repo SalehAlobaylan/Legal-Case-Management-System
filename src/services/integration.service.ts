@@ -38,7 +38,7 @@ export type IntegrationStatus =
   | "error"
   | "coming_soon";
 
-export interface IntegrationCredentials {
+export interface IntegrationCredentials extends Record<string, unknown> {
   clientSecret?: string;
   accessToken?: string;
   refreshToken?: string;
