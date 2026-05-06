@@ -107,6 +107,72 @@ export interface FindRelatedResponse {
   pipeline_warnings?: string[];
 }
 
+// --- Multi-source variant (Phase 6) -----------------------------------------
+// Mirrors the FastAPI schemas in ai_service/app/api/routes/find_related_multi_source.py
+export type MultiSourceType =
+  | "regulation"
+  | "judicial_decision"
+  | "gov_data"
+  | "web_source";
+
+export type MultiSourceTrustTier =
+  | "official"
+  | "trusted"
+  | "discovered"
+  | "unverified";
+
+export interface MultiSourceChunk {
+  chunk_index?: number;
+  text: string;
+  section_ref?: string | null;
+  embedding?: number[]; // pre-computed for trusted sources
+}
+
+export interface MultiSourceCandidate {
+  legal_source_id: number;
+  source_type: MultiSourceType;
+  trust_tier: MultiSourceTrustTier;
+  source_authority: string;
+  title: string;
+  is_citable_in_court?: boolean;
+  source_url?: string | null;
+  chunks: MultiSourceChunk[];
+}
+
+export interface MultiSourceMatchedChunk {
+  chunk_index: number;
+  section_ref: string | null;
+  excerpt: string;
+  relevance: number;
+}
+
+export interface MultiSourceMatch {
+  legal_source_id: number;
+  source_type: MultiSourceType;
+  trust_tier: MultiSourceTrustTier;
+  source_authority: string;
+  title: string;
+  source_url: string | null;
+  is_citable_in_court: boolean;
+  relevance_score: number;
+  trust_weighted_score: number;
+  best_chunk: MultiSourceMatchedChunk | null;
+  pipeline_stage: string;
+}
+
+export interface MultiSourceGroup {
+  source_type: MultiSourceType;
+  count: number;
+  any_citable: boolean;
+  matches: MultiSourceMatch[];
+}
+
+export interface MultiSourceFindRelatedResponse {
+  case_text_chars: number;
+  total_sources_evaluated: number;
+  groups: MultiSourceGroup[];
+}
+
 export interface ExtractRegulationInput {
   sourceUrl: string;
   ifNoneMatch?: string | null;
@@ -493,6 +559,53 @@ export class AIClientService {
       logger.error(
         { err: error },
         "Failed to find related regulations from AI service"
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * findRelatedMultiSource
+   *
+   * Type-agnostic counterpart to findRelatedRegulations: scores a heterogeneous
+   * mix of legal sources (regulations, judicial decisions, gov data, web
+   * sources) against the case text and returns matches grouped by source type
+   * with trust-weighted scores already applied.
+   *
+   * Calls the AI service's `/similarity/find-related-multi-source` endpoint.
+   */
+  async findRelatedMultiSource(
+    caseText: string,
+    sources: MultiSourceCandidate[],
+    options?: {
+      caseType?: string;
+      topKPerGroup?: number;
+      minRelevance?: number;
+    }
+  ): Promise<MultiSourceFindRelatedResponse> {
+    try {
+      const response = await this.fetchWithRetry(
+        `${this.baseUrl}/similarity/find-related-multi-source`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            case_text: caseText,
+            case_type: options?.caseType,
+            sources,
+            top_k_per_group: options?.topKPerGroup ?? 5,
+            min_relevance: options?.minRelevance ?? 0,
+          }),
+        },
+        "find-related-multi-source",
+        { timeoutMs: Math.max(this.timeoutMs, 120000) }
+      );
+
+      return (await response.json()) as MultiSourceFindRelatedResponse;
+    } catch (error) {
+      logger.error(
+        { err: error },
+        "Failed to find related multi-source results from AI service"
       );
       throw error;
     }

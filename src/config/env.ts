@@ -127,6 +127,30 @@ const envSchema = z.object({
   TWILIO_WHATSAPP_FROM: z.string().optional(),
 
   WEBHOOK_SHARED_SECRET: z.string().optional(),
+
+  // --- Open Data Saudi (CKAN) ingestion ---
+  OPEN_DATA_SYNC_ENABLED: envBoolean(true),
+  OPEN_DATA_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(60).default(1440), // daily
+  OPEN_DATA_BASE_URL: z.string().url().default("https://open.data.gov.sa/api"),
+  // Comma-separated CKAN organization IDs to ingest. Default = MOJ on Open Data Saudi.
+  OPEN_DATA_TRUSTED_PUBLISHERS: z
+    .string()
+    .default("35c63412-c4ae-4303-8fef-56cfd71303cf"),
+  OPEN_DATA_MAX_DATASETS_PER_PUBLISHER: z.coerce.number().int().min(1).max(1000).default(200),
+
+  // --- Tavily web search ---
+  TAVILY_API_KEY: z.string().optional(),
+  TAVILY_BASE_URL: z.string().url().default("https://api.tavily.com"),
+  TAVILY_ENABLED: envBoolean(true),
+  TAVILY_DEFAULT_MAX_RESULTS: z.coerce.number().int().min(1).max(20).default(5),
+  TAVILY_DEFAULT_SEARCH_DEPTH: z.enum(["basic", "advanced"]).default("basic"),
+  TAVILY_CACHE_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  // Per-organization daily search budget — protects against runaway costs
+  TAVILY_DAILY_SEARCH_LIMIT_PER_ORG: z.coerce.number().int().min(0).default(100),
+  // Domains pre-classified as high-trust regardless of LLM judging
+  TAVILY_TRUSTED_DOMAINS: z
+    .string()
+    .default("gov.sa,moj.gov.sa,laws.moj.gov.sa,my.gov.sa,boe.gov.sa"),
 });
 
 export const env = envSchema.parse(process.env);

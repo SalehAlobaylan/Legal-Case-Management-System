@@ -6,6 +6,7 @@ import { DocumentExtractionService } from "../services/document-extraction.servi
 import { RegulationSourceService } from "../services/regulation-source.service";
 import { RegulationInsightsService } from "../services/regulation-insights.service";
 import { RegulationAmendmentImpactService } from "../services/regulation-amendment-impact.service";
+import { OpenDataSourceService } from "../services/open-data-source.service";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -17,7 +18,9 @@ async function main() {
   const documentExtractionService = new DocumentExtractionService(db);
   const regulationInsightsService = new RegulationInsightsService(db);
   const amendmentImpactService = new RegulationAmendmentImpactService(db);
+  const openDataService = new OpenDataSourceService(db);
   let lastSourceSyncAt = 0;
+  let lastOpenDataSyncAt = 0;
   logger.info(
     {
       pollSeconds: env.REG_MONITOR_POLL_SECONDS,
@@ -38,6 +41,9 @@ async function main() {
       regImpactEnabled: env.REG_IMPACT_ENABLED,
       regImpactBatchSize: env.REG_IMPACT_BATCH_SIZE,
       regImpactConcurrency: env.REG_IMPACT_MAX_CONCURRENCY,
+      openDataSyncEnabled: env.OPEN_DATA_SYNC_ENABLED,
+      openDataSyncIntervalMinutes: env.OPEN_DATA_SYNC_INTERVAL_MINUTES,
+      openDataPublishers: env.OPEN_DATA_TRUSTED_PUBLISHERS,
     },
     "Regulation monitor worker started"
   );
@@ -56,6 +62,25 @@ async function main() {
           });
           lastSourceSyncAt = Date.now();
           logger.info(syncResult, "MOJ regulation source sync cycle completed");
+        }
+      }
+
+      if (env.OPEN_DATA_SYNC_ENABLED) {
+        const intervalMs = env.OPEN_DATA_SYNC_INTERVAL_MINUTES * 60 * 1000;
+        const shouldSync = Date.now() - lastOpenDataSyncAt >= intervalMs;
+        if (shouldSync) {
+          try {
+            const openDataResult = await openDataService.syncTrustedPublishers();
+            lastOpenDataSyncAt = Date.now();
+            logger.info(openDataResult, "Open Data Saudi sync cycle completed");
+          } catch (err) {
+            // Don't poison the rest of the cycle on open-data failures
+            lastOpenDataSyncAt = Date.now();
+            logger.error(
+              { err },
+              "Open Data Saudi sync cycle failed; will retry next interval"
+            );
+          }
         }
       }
 

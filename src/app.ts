@@ -22,6 +22,8 @@ import organizationsRoutes from "./routes/organizations";
 import casesRoutes from "./routes/cases";
 import regulationsRoutes from "./routes/regulations";
 import aiLinksRoutes from "./routes/ai-links";
+import caseSourcesRoutes from "./routes/case-sources";
+import caseSourcesCuratorRoutes from "./routes/case-sources/curator";
 import dashboardRoutes from "./routes/dashboard";
 import documentsRoutes from "./routes/documents";
 import clientsRoutes from "./routes/clients";
@@ -112,6 +114,10 @@ export function buildApp(opts = {}) {
   app.register(caseDocumentsRoutes, { prefix: "/api/cases" });
   app.register(regulationsRoutes, { prefix: "/api/regulations" });
   app.register(aiLinksRoutes, { prefix: "/api/ai-links" });
+  app.register(caseSourcesRoutes, { prefix: "/api/case-sources" });
+  app.register(caseSourcesCuratorRoutes, {
+    prefix: "/api/case-sources/curator",
+  });
   app.register(dashboardRoutes, { prefix: "/api/dashboard" });
   app.register(documentsRoutes, { prefix: "/api/documents" });
   app.register(clientsRoutes, { prefix: "/api/clients" });
