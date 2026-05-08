@@ -412,7 +412,8 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
                     )
                 );
 
-            const totalCases = totalCasesResult[0]?.count || 0;
+            const activeCases = Number(activeCasesResult[0]?.count ?? 0);
+            const totalCases = Number(totalCasesResult[0]?.count ?? 0);
             const closedCases = closedCasesResult.length || 0;
             const winRate = totalCases > 0 ? Math.round((closedCases / totalCases) * 100) : 0;
 
@@ -436,19 +437,23 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
             const avgDurationChange = -8;
             const hoursChange = 12;
 
-            const totalRegulationsReviewed = regulationsReviewedResult[0]?.count || 0;
-            const aiSuggestionCount = aiSuggestionsResult[0]?.count || 0;
+            const pendingCases = Number(pendingCasesResult[0]?.count ?? 0);
+            const totalClients = Number(uniqueClientsResult[0]?.count ?? 0);
+            const totalRegulationsReviewed = Number(regulationsReviewedResult[0]?.count ?? 0);
+            const aiSuggestionCount = Number(aiSuggestionsResult[0]?.count ?? 0);
             const aiSuggestionsAccepted = totalRegulationsReviewed > 0
                 ? Math.round((aiSuggestionCount / totalRegulationsReviewed) * 100)
                 : 78;
+            const documentsProcessed = Number(documentsProcessedResult[0]?.count ?? 0);
+            const thisMonthHours = Number(thisMonthActivitiesResult[0]?.count ?? 0);
 
             return reply.send({
                 stats: {
-                    activeCases: activeCasesResult[0]?.count || 0,
+                    activeCases,
                     totalCases,
                     closedCases,
-                    pendingCases: pendingCasesResult[0]?.count || 0,
-                    totalClients: uniqueClientsResult[0]?.count || 0,
+                    pendingCases,
+                    totalClients,
                     winRate,
                     winRateChange,
                     avgCaseDuration,
@@ -457,8 +462,8 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
                     satisfactionChange,
                     regulationsReviewed: totalRegulationsReviewed,
                     aiSuggestionsAccepted,
-                    documentsProcessed: documentsProcessedResult[0]?.count || 0,
-                    thisMonthHours: thisMonthActivitiesResult[0]?.count || 0,
+                    documentsProcessed,
+                    thisMonthHours,
                     hoursChange,
                 },
             });
