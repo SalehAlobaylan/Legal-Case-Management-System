@@ -16,12 +16,14 @@ import {
 import { db } from "../../db/connection";
 import { organizations } from "../../db/schema/organizations";
 import { aiSettings } from "../../db/schema/ai-settings";
-import { type UserRole } from "../../db/schema/users";
-import { eq } from "drizzle-orm";
+import { users, type UserRole } from "../../db/schema/users";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { NotificationPreferencesService } from "../../services/notification-preferences.service";
 import { SecurityService } from "../../services/security.service";
 import { TeamService } from "../../services/team.service";
+import { PermissionService } from "../../services/permission.service";
+import { AuditLogService } from "../../services/audit-log.service";
 import { createTokenPayload } from "../../utils/jwt";
 
 type RequestWithUser = FastifyRequest & {
@@ -52,9 +54,46 @@ const notificationPrefsSchema = z.object({
     digestFrequency: z.enum(["daily", "weekly"]).optional(),
 });
 
+const privacySettingsSchema = z
+    .object({
+        documents: z.boolean().optional(),
+        clients: z.boolean().optional(),
+        teamDirectory: z.boolean().optional(),
+        adminClosureRequired: z.boolean().optional(),
+    })
+    .partial()
+    .strict();
+
+const orgSettingsSchema = z
+    .object({
+        privacy: privacySettingsSchema.optional(),
+    })
+    .partial();
+
 const updateOrgSchema = z.object({
     name: z.string().min(1).optional(),
     contactInfo: z.string().optional(),
+    restrictCaseVisibility: z.boolean().optional(),
+    settings: orgSettingsSchema.optional(),
+});
+
+// Permissions an admin can grant to a team member. Keep this allowlist tight so
+// arbitrary strings can't sneak into the grants table.
+//
+// NOTE — these live under `delegated.*` rather than `cases.*` on purpose. A
+// lawyer's role default includes `cases.*` (full CRUD on cases), and if these
+// were named `cases.assign`/`cases.viewAll` the wildcard would implicitly grant
+// them. The `delegated` namespace is only matched by admin's `*` or an explicit
+// per-user grant — exactly what we want.
+const GRANTABLE_PERMISSIONS = [
+  "delegated.cases.assign",
+  "delegated.cases.viewAll",
+  "delegated.cases.close",
+  "delegated.documents.viewAll",
+  "delegated.clients.viewAll",
+] as const;
+const grantPermissionSchema = z.object({
+    permission: z.enum(GRANTABLE_PERMISSIONS),
 });
 
 const inviteTeamMemberSchema = z.object({
@@ -214,6 +253,19 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
 
             const data = updateOrgSchema.parse(body);
 
+            // restrictCaseVisibility is meaningless for personal (single-user) workspaces;
+            // ignore it rather than persisting noise.
+            if (typeof data.restrictCaseVisibility === "boolean") {
+                const [currentOrg] = await db
+                    .select({ isPersonal: organizations.isPersonal })
+                    .from(organizations)
+                    .where(eq(organizations.id, user.orgId))
+                    .limit(1);
+                if (currentOrg?.isPersonal) {
+                    delete (data as { restrictCaseVisibility?: boolean }).restrictCaseVisibility;
+                }
+            }
+
             const [updatedOrg] = await db
                 .update(organizations)
                 .set({
@@ -222,6 +274,84 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
                 })
                 .where(eq(organizations.id, user.orgId))
                 .returning();
+
+            return reply.send({ organization: updatedOrg });
+        }
+    );
+
+    /**
+     * PATCH /api/settings/organization
+     *
+     * - Alias for the PUT route above, so REST-style PATCH semantics work too.
+     */
+    fastify.patch(
+        "/organization",
+        {
+            schema: {
+                description: "Patch organization settings",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user, body } = request as RequestWithUser & { body: unknown };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const data = updateOrgSchema.parse(body);
+
+            // Load current org so we can merge `settings.privacy` and gate
+            // restrictCaseVisibility on personal workspaces.
+            const [currentOrg] = await db
+                .select({
+                    isPersonal: organizations.isPersonal,
+                    settings: organizations.settings,
+                })
+                .from(organizations)
+                .where(eq(organizations.id, user.orgId))
+                .limit(1);
+
+            if (typeof data.restrictCaseVisibility === "boolean" && currentOrg?.isPersonal) {
+                delete (data as { restrictCaseVisibility?: boolean }).restrictCaseVisibility;
+            }
+
+            // Merge settings deeply so toggling one privacy flag preserves the others.
+            let mergedSettings: typeof currentOrg.settings | undefined;
+            if (data.settings) {
+                const existing = (currentOrg?.settings ?? {}) as Record<string, unknown>;
+                const incoming = data.settings;
+                mergedSettings = {
+                    ...existing,
+                    ...incoming,
+                    privacy: {
+                        ...((existing.privacy as Record<string, unknown> | undefined) ?? {}),
+                        ...(incoming.privacy ?? {}),
+                    },
+                };
+                // Drop the un-merged version so the spread below doesn't clobber.
+                delete (data as { settings?: unknown }).settings;
+            }
+
+            const [updatedOrg] = await db
+                .update(organizations)
+                .set({
+                    ...data,
+                    ...(mergedSettings ? { settings: mergedSettings } : {}),
+                    updatedAt: new Date(),
+                })
+                .where(eq(organizations.id, user.orgId))
+                .returning();
+
+            await new AuditLogService(db).log({
+                organizationId: user.orgId,
+                actorUserId: user.id,
+                action: "org.settings.update",
+                targetType: "organization",
+                targetId: user.orgId,
+                payload: { ...data, ...(mergedSettings ? { settings: mergedSettings } : {}) },
+            });
 
             return reply.send({ organization: updatedOrg });
         }
@@ -243,12 +373,25 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
         },
         async (request: FastifyRequest, reply: FastifyReply) => {
             const { user } = request as RequestWithUser;
-            const members = await teamService.listMembers(user.orgId);
+
             const [organization] = await db
                 .select()
                 .from(organizations)
                 .where(eq(organizations.id, user.orgId))
                 .limit(1);
+
+            // Privacy gate — when the org has hidden the directory, only
+            // admins can browse the team list.
+            const settings = (organization?.settings ?? {}) as {
+                privacy?: { teamDirectory?: boolean };
+            };
+            if (settings.privacy?.teamDirectory && user.role !== "admin") {
+                return reply.status(403).send({
+                    message: "Team directory is restricted by your administrator",
+                });
+            }
+
+            const members = await teamService.listMembers(user.orgId);
 
             return reply.send({
                 members,
@@ -335,6 +478,86 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
     );
 
     /**
+     * DELETE /api/settings/team/invitations/:id
+     *
+     * - Revokes a pending invitation (admin only). The code stops working.
+     */
+    fastify.delete(
+        "/team/invitations/:id",
+        {
+            schema: {
+                description: "Revoke a pending invitation",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+            const { id } = request.params as { id: string };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const numericId = Number(id);
+            if (!Number.isInteger(numericId) || numericId <= 0) {
+                return reply.status(400).send({ message: "Invalid invitation id" });
+            }
+
+            const updated = await teamService.revokeInvitation({
+                actorUserId: user.id,
+                organizationId: user.orgId,
+                invitationId: numericId,
+            });
+
+            return reply.send({ success: true, invitation: updated });
+        }
+    );
+
+    /**
+     * POST /api/settings/team/invitations/:id/resend
+     *
+     * - Rotates the invitation code and extends the expiry. Returns the new
+     *   code so the admin can share it.
+     */
+    fastify.post(
+        "/team/invitations/:id/resend",
+        {
+            schema: {
+                description: "Resend (rotate) an invitation code",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+            const { id } = request.params as { id: string };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const numericId = Number(id);
+            if (!Number.isInteger(numericId) || numericId <= 0) {
+                return reply.status(400).send({ message: "Invalid invitation id" });
+            }
+
+            const { invitation, invitationCode } = await teamService.resendInvitation({
+                actorUserId: user.id,
+                organizationId: user.orgId,
+                invitationId: numericId,
+            });
+
+            return reply.send({
+                success: true,
+                invitation,
+                invitationCode,
+                expiresAt: invitation.expiresAt,
+            });
+        }
+    );
+
+    /**
      * POST /api/settings/team/invitations/accept
      *
      * - Accept invitation code and switch user to that organization.
@@ -413,6 +636,77 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
     );
 
     /**
+     * PATCH /api/settings/team/members/:memberId/leave
+     *
+     * - Toggles the member's `isOnLeave` flag (admin only). Pure tag — doesn't
+     *   block their login/work; surfaces a redistribute CTA on their profile.
+     */
+    fastify.patch(
+        "/team/members/:memberId/leave",
+        {
+            schema: {
+                description: "Toggle a member's on-leave flag",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user, body } = request as RequestWithUser & { body: unknown };
+            const { memberId } = request.params as { memberId: string };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const data = z.object({ isOnLeave: z.boolean() }).parse(body);
+
+            const [member] = await db
+                .select({
+                  id: users.id,
+                  organizationId: users.organizationId,
+                  isOnLeave: users.isOnLeave,
+                  fullName: users.fullName,
+                  email: users.email,
+                })
+                .from(users)
+                .where(and(eq(users.id, memberId), eq(users.organizationId, user.orgId)))
+                .limit(1);
+            if (!member) {
+                return reply.status(404).send({ message: "Team member not found" });
+            }
+
+            const [updated] = await db
+                .update(users)
+                .set({ isOnLeave: data.isOnLeave, updatedAt: new Date() })
+                .where(eq(users.id, memberId))
+                .returning();
+
+            await new AuditLogService(db).log({
+                organizationId: user.orgId,
+                actorUserId: user.id,
+                action: "member.leave_toggle",
+                targetType: "user",
+                targetId: memberId,
+                payload: {
+                    from: member.isOnLeave,
+                    to: data.isOnLeave,
+                    memberEmail: member.email,
+                },
+            });
+
+            return reply.send({
+                success: true,
+                member: {
+                    id: updated.id,
+                    fullName: updated.fullName,
+                    email: updated.email,
+                    isOnLeave: updated.isOnLeave,
+                },
+            });
+        }
+    );
+
+    /**
      * DELETE /api/settings/team/members/:memberId
      *
      * - Remove member from organization (admin only).
@@ -445,6 +739,162 @@ const settingsRoutes: FastifyPluginAsync = async (fastify) => {
                 message: "Member removed from organization",
                 member: removedMember,
             });
+        }
+    );
+
+    /**
+     * GET /api/settings/team/members/:memberId/permissions
+     *
+     * - Returns granted permissions for a single team member (admin only).
+     */
+    fastify.get(
+        "/team/members/:memberId/permissions",
+        {
+            schema: {
+                description: "List granted permissions for a team member",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+            const { memberId } = request.params as { memberId: string };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            // Verify the member belongs to the admin's org
+            const [member] = await db
+                .select({ id: users.id })
+                .from(users)
+                .where(and(eq(users.id, memberId), eq(users.organizationId, user.orgId)))
+                .limit(1);
+            if (!member) {
+                return reply.status(404).send({ message: "Team member not found" });
+            }
+
+            const permService = new PermissionService(db);
+            const permissions = await permService.getGrantedPermissions(
+                memberId,
+                user.orgId
+            );
+
+            return reply.send({
+                permissions,
+                grantable: GRANTABLE_PERMISSIONS,
+            });
+        }
+    );
+
+    /**
+     * POST /api/settings/team/members/:memberId/permissions
+     *
+     * - Grants a permission to a team member (admin only). Body: { permission }.
+     */
+    fastify.post(
+        "/team/members/:memberId/permissions",
+        {
+            schema: {
+                description: "Grant a permission to a team member",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user, body } = request as RequestWithUser & { body: unknown };
+            const { memberId } = request.params as { memberId: string };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            const data = grantPermissionSchema.parse(body);
+
+            const [member] = await db
+                .select({ id: users.id })
+                .from(users)
+                .where(and(eq(users.id, memberId), eq(users.organizationId, user.orgId)))
+                .limit(1);
+            if (!member) {
+                return reply.status(404).send({ message: "Team member not found" });
+            }
+
+            const permService = new PermissionService(db);
+            await permService.grantPermission({
+                userId: memberId,
+                organizationId: user.orgId,
+                permission: data.permission,
+                grantedBy: user.id,
+            });
+
+            await new AuditLogService(db).log({
+                organizationId: user.orgId,
+                actorUserId: user.id,
+                action: "permission.grant",
+                targetType: "user",
+                targetId: memberId,
+                payload: { permission: data.permission },
+            });
+
+            const permissions = await permService.getGrantedPermissions(
+                memberId,
+                user.orgId
+            );
+            return reply.send({ permissions });
+        }
+    );
+
+    /**
+     * DELETE /api/settings/team/members/:memberId/permissions/:permission
+     *
+     * - Revokes a permission from a team member (admin only).
+     */
+    fastify.delete(
+        "/team/members/:memberId/permissions/:permission",
+        {
+            schema: {
+                description: "Revoke a permission from a team member",
+                tags: ["settings"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+            const { user } = request as RequestWithUser;
+            const { memberId, permission } = request.params as {
+                memberId: string;
+                permission: string;
+            };
+
+            if (user.role !== "admin") {
+                return reply.status(403).send({ message: "Admin access required" });
+            }
+
+            if (!GRANTABLE_PERMISSIONS.includes(permission as typeof GRANTABLE_PERMISSIONS[number])) {
+                return reply.status(400).send({ message: "Unknown permission" });
+            }
+
+            const permService = new PermissionService(db);
+            await permService.revokePermission({
+                userId: memberId,
+                organizationId: user.orgId,
+                permission,
+            });
+
+            await new AuditLogService(db).log({
+                organizationId: user.orgId,
+                actorUserId: user.id,
+                action: "permission.revoke",
+                targetType: "user",
+                targetId: memberId,
+                payload: { permission },
+            });
+
+            const permissions = await permService.getGrantedPermissions(
+                memberId,
+                user.orgId
+            );
+            return reply.send({ permissions });
         }
     );
 

@@ -35,3 +35,6 @@ export * from "./ai-evaluation-labels";
 export * from "./ai-evaluation-runs";
 export * from "./ai-evaluation-run-cases";
 export * from "./integrations";
+export * from "./user-permission-grants";
+export * from "./org-announcements";
+export * from "./admin-audit-log";

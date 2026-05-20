@@ -21,6 +21,7 @@ import type { Database } from "../../db/connection";
 import * as path from "path";
 import { randomUUID } from "crypto";
 import { getScopedClientIdForUser } from "../../lib/request-context";
+import { assertCanSeeDocument } from "../../lib/access-context";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -248,6 +249,9 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       scopedClientId
     );
 
+    // Enforce the org's `restrictDocumentSharing` policy.
+    await assertCanSeeDocument({ db: app.db, user, document });
+
     let fileBuffer: Buffer;
     try {
       fileBuffer = await getStorageService().download(document.filePath);
@@ -339,6 +343,13 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
+      // Read first so we have caseId for the privacy check.
+      const docPreview = await documentService.getDocumentById(
+        docId,
+        user.orgId
+      );
+      await assertCanSeeDocument({ db: app.db, user, document: docPreview });
+
       const document = await documentService.deleteDocument(docId, user.orgId);
 
       await getStorageService().delete(document.filePath);
@@ -393,7 +404,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      await documentService.getDocumentById(docIdNum, user.orgId, scopedClientId);
+      const doc = await documentService.getDocumentById(docIdNum, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       const existingInsights = await extractionService.getDocumentInsightsByDocumentId(
@@ -477,7 +489,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: _doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       const insights = await extractionService.getDocumentInsightsByDocumentId(
@@ -521,7 +534,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: _doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       await extractionService.enqueueDocumentInsights(docId, user.orgId);
@@ -576,7 +590,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: _doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       await extractionService.enqueueSingleDocument(docId, user.orgId, { force: true });
@@ -636,7 +651,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: _doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       const status = await extractionService.getExtractionStatusByDocumentId(

@@ -5,19 +5,22 @@
  * - All operations are scoped to the user's organization.
  */
 
-import { eq, and, desc, like, or, sql } from "drizzle-orm";
+import { eq, and, desc, like, or, sql, inArray, isNotNull } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { 
-  clients, 
-  type NewClient, 
+import {
+  clients,
+  type NewClient,
   cases,
   clientActivities,
   clientDocuments,
+  organizations,
   type NewClientActivity,
   type NewClientDocument,
 } from "../db/schema";
 import { NotFoundError, ForbiddenError } from "../utils/errors";
+import { type CaseAccessContext } from "./case.service";
+import { PermissionService } from "./permission.service";
 
 export class ClientService {
   constructor(private db: Database) { }
@@ -36,13 +39,42 @@ export class ClientService {
     return client;
   }
 
+  /*
+   * orgRestrictsClientSharing
+   *
+   * - Returns true when `settings.privacy.clients` is ON AND the caller lacks
+   *   the `delegated.clients.viewAll` bypass (admin's `*` also bypasses).
+   */
+  private async orgRestrictsClientSharing(
+    orgId: number,
+    access?: CaseAccessContext
+  ): Promise<boolean> {
+    if (!access) return false;
+    if (
+      PermissionService.can(access.effectivePermissions, "delegated.clients.viewAll")
+    ) {
+      return false;
+    }
+    const [org] = await this.db
+      .select({ settings: organizations.settings })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .limit(1);
+    return Boolean(
+      (org?.settings as { privacy?: { clients?: boolean } } | null | undefined)
+        ?.privacy?.clients
+    );
+  }
+
   /**
    * getClientById
    *
    * - Retrieves a single client by ID.
    * - Verifies it belongs to the specified organization.
+   * - When `restrictClientSharing` is ON and the caller doesn't bypass, the
+   *   client must be linked to a case the caller is assigned to.
    */
-  async getClientById(id: number, orgId: number) {
+  async getClientById(id: number, orgId: number, access?: CaseAccessContext) {
     const client = await this.db.query.clients.findFirst({
       where: eq(clients.id, id),
     });
@@ -55,6 +87,23 @@ export class ClientService {
       throw new ForbiddenError("Access denied to this client");
     }
 
+    if (await this.orgRestrictsClientSharing(orgId, access)) {
+      const [link] = await this.db
+        .select({ id: cases.id })
+        .from(cases)
+        .where(
+          and(
+            eq(cases.organizationId, orgId),
+            eq(cases.clientId, id),
+            eq(cases.assignedLawyerId, access!.userId)
+          )
+        )
+        .limit(1);
+      if (!link) {
+        throw new ForbiddenError("Access denied to this client");
+      }
+    }
+
     return client;
   }
 
@@ -63,6 +112,8 @@ export class ClientService {
    *
    * - Returns all clients for an organization.
    * - Supports optional filters for type and status.
+   * - When `restrictClientSharing` is ON, narrows the result to clients linked
+   *   to a case the caller is assigned to.
    */
   async getClientsByOrganization(
     orgId: number,
@@ -71,7 +122,8 @@ export class ClientService {
       status?: string;
       leadStatus?: string;
       tag?: string;
-    }
+    },
+    access?: CaseAccessContext
   ) {
     const conditions: SQL<unknown>[] = [eq(clients.organizationId, orgId)];
 
@@ -87,6 +139,24 @@ export class ClientService {
     if (filters?.tag) {
       // Using JSONB inclusion operator to check if tags array contains the tag
       conditions.push(sql`${clients.tags} @> ${JSON.stringify([filters.tag])}`);
+    }
+
+    if (await this.orgRestrictsClientSharing(orgId, access)) {
+      conditions.push(
+        inArray(
+          clients.id,
+          this.db
+            .select({ id: cases.clientId })
+            .from(cases)
+            .where(
+              and(
+                eq(cases.organizationId, orgId),
+                eq(cases.assignedLawyerId, access!.userId),
+                isNotNull(cases.clientId)
+              )
+            )
+        )
+      );
     }
 
     return this.db.query.clients.findMany({

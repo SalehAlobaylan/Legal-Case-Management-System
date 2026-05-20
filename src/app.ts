@@ -43,6 +43,8 @@ import { AutomationEngineService } from "./services/automation-engine.service";
 import webhooksRoutes from "./routes/webhooks";
 import { MessagingRetryService } from "./services/messaging-retry.service";
 import integrationsRoutes from "./routes/integrations";
+import adminRoutes from "./routes/admin";
+import announcementsRoutes from "./routes/announcements";
 
 export function buildApp(opts = {}) {
   const app = Fastify({
@@ -135,6 +137,8 @@ export function buildApp(opts = {}) {
   app.register(automationsRoutes, { prefix: "/api/automations" });
   app.register(webhooksRoutes, { prefix: "/api/webhooks" });
   app.register(integrationsRoutes, { prefix: "/api/integrations" });
+  app.register(adminRoutes, { prefix: "/api/admin" });
+  app.register(announcementsRoutes, { prefix: "/api/announcements" });
 
   return app;
 }

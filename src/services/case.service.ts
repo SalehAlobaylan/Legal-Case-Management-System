@@ -10,10 +10,16 @@
  *   the global error handler can convert them into consistent HTTP responses.
  */
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { cases, type Case, type NewCase } from "../db/schema";
+import { cases, organizations, type Case, type NewCase } from "../db/schema";
 import { ForbiddenError, NotFoundError } from "../utils/errors";
+import { PermissionService } from "./permission.service";
+
+export interface CaseAccessContext {
+  userId: string;
+  effectivePermissions: Set<string>;
+}
 
 export class CaseService {
   constructor(private db: Database) {}
@@ -46,10 +52,37 @@ export class CaseService {
    * - Throws `ForbiddenError` if the case belongs to a different organization
    *   than the one provided via `orgId`.
    */
+  /*
+   * orgRestrictsVisibility
+   *
+   * - Returns true when the org has opted into per-assignee scoping AND the
+   *   caller lacks the `cases.viewAll` bypass permission.
+   */
+  private async orgRestrictsVisibility(
+    orgId: number,
+    access?: CaseAccessContext
+  ): Promise<boolean> {
+    if (!access) return false;
+    if (
+      PermissionService.can(access.effectivePermissions, "delegated.cases.viewAll")
+    ) {
+      return false;
+    }
+    const [org] = await this.db
+      .select({
+        restrictCaseVisibility: organizations.restrictCaseVisibility,
+      })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .limit(1);
+    return Boolean(org?.restrictCaseVisibility);
+  }
+
   async getCaseById(
     id: number,
     orgId: number,
-    scopedClientId?: number | null
+    scopedClientId?: number | null,
+    access?: CaseAccessContext
   ): Promise<Case> {
     const case_ = await this.db.query.cases.findFirst({
       where: eq(cases.id, id),
@@ -74,6 +107,13 @@ export class CaseService {
       throw new ForbiddenError("Access denied to this case");
     }
 
+    // Per-assignee visibility scoping
+    if (await this.orgRestrictsVisibility(orgId, access)) {
+      if (case_.assignedLawyerId !== access!.userId) {
+        throw new ForbiddenError("Access denied to this case");
+      }
+    }
+
     return case_;
   }
 
@@ -84,7 +124,8 @@ export class CaseService {
       caseType?: string;
       assignedLawyerId?: string;
     },
-    scopedClientId?: number | null
+    scopedClientId?: number | null,
+    access?: CaseAccessContext
   ) {
     const conditions = [eq(cases.organizationId, orgId)];
 
@@ -100,6 +141,10 @@ export class CaseService {
     }
     if (typeof scopedClientId === "number") {
       conditions.push(eq(cases.clientId, scopedClientId));
+    }
+
+    if (await this.orgRestrictsVisibility(orgId, access)) {
+      conditions.push(eq(cases.assignedLawyerId, access!.userId));
     }
 
     // Always scope by organization and sort newest cases first
@@ -129,10 +174,11 @@ export class CaseService {
     id: number,
     orgId: number,
     data: Partial<NewCase>,
-    scopedClientId?: number | null
+    scopedClientId?: number | null,
+    access?: CaseAccessContext
   ) {
-    // Verify ownership
-    await this.getCaseById(id, orgId, scopedClientId);
+    // Verify ownership (and visibility scoping if applicable)
+    await this.getCaseById(id, orgId, scopedClientId, access);
 
     const [updated] = await this.db
       .update(cases)
@@ -153,12 +199,75 @@ export class CaseService {
    * - Deletes the case row from the database.
    * - Returns a simple `{ success: true }` payload for convenience.
    */
-  async deleteCase(id: number, orgId: number, scopedClientId?: number | null) {
-    // Verify ownership
-    await this.getCaseById(id, orgId, scopedClientId);
+  async deleteCase(
+    id: number,
+    orgId: number,
+    scopedClientId?: number | null,
+    access?: CaseAccessContext
+  ) {
+    // Verify ownership (and visibility scoping if applicable)
+    await this.getCaseById(id, orgId, scopedClientId, access);
 
     await this.db.delete(cases).where(eq(cases.id, id));
 
     return { success: true };
+  }
+
+  /*
+   * assignCase
+   *
+   * - Reassigns the case's `assignedLawyerId` (or clears it when null).
+   * - The handler is responsible for the higher-level authorization
+   *   (admin/senior or self-unassign); this method only validates the
+   *   target lawyer belongs to the same organization.
+   */
+  async assignCase(
+    id: number,
+    orgId: number,
+    assignedLawyerId: string | null,
+    access?: CaseAccessContext
+  ) {
+    // Reuse getCaseById's visibility/org checks
+    await this.getCaseById(id, orgId, null, access);
+
+    const [updated] = await this.db
+      .update(cases)
+      .set({ assignedLawyerId, updatedAt: new Date() })
+      .where(eq(cases.id, id))
+      .returning();
+
+    return updated;
+  }
+
+  /*
+   * bulkAssignCases
+   *
+   * - Reassigns multiple cases in one go. Validates every id is in the caller's
+   *   org and visible under their access context BEFORE doing any writes — if
+   *   any id is missing or hidden, throws and nothing is mutated.
+   * - Returns the updated rows.
+   */
+  async bulkAssignCases(
+    ids: number[],
+    orgId: number,
+    assignedLawyerId: string | null,
+    access?: CaseAccessContext
+  ) {
+    if (ids.length === 0) return [];
+    // De-dupe and sanity-bound to avoid huge requests.
+    const uniqueIds = Array.from(new Set(ids)).slice(0, 200);
+
+    // Per-id visibility/org check — keeps semantics identical to single assign.
+    for (const id of uniqueIds) {
+      await this.getCaseById(id, orgId, null, access);
+    }
+
+    const updated = await this.db
+      .update(cases)
+      .set({ assignedLawyerId, updatedAt: new Date() })
+      .where(and(eq(cases.organizationId, orgId), inArray(cases.id, uniqueIds)))
+      .returning();
+
+    return updated;
   }
 }

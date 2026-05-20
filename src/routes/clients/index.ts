@@ -26,6 +26,7 @@ import { randomUUID } from "crypto";
 import { getStorageService, resolveStorageKey } from "../../services/storage.service";
 import { AutomationEngineService } from "../../services/automation-engine.service";
 import { getScopedClientIdForUser } from "../../lib/request-context";
+import { buildAccessContext } from "../../lib/access-context";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -147,14 +148,16 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       const clientService = new ClientService(app.db);
+      const access = await buildAccessContext(app.db, user);
       if (typeof scopedClientId === "number") {
-        const client = await clientService.getClientById(scopedClientId, user.orgId);
+        const client = await clientService.getClientById(scopedClientId, user.orgId, access);
         return reply.send({ clients: [client], total: 1, page: 1, limit: 1 });
       }
 
       const clientsList = await clientService.getClientsByOrganization(
         user.orgId,
-        { type, status, leadStatus, tag }
+        { type, status, leadStatus, tag },
+        access
       );
 
       const filtered = search
@@ -343,7 +346,8 @@ const clientsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const clientService = new ClientService(app.db);
-      const client = await clientService.getClientById(clientId, user.orgId);
+      const access = await buildAccessContext(app.db, user);
+      const client = await clientService.getClientById(clientId, user.orgId, access);
 
       return reply.send({ client });
     }

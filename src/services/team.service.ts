@@ -15,6 +15,7 @@ import {
   UnauthorizedError,
 } from "../utils/errors";
 import { OrganizationService } from "./organization.service";
+import { AuditLogService } from "./audit-log.service";
 
 const ROLE_PRIORITY: Record<UserRole, number> = {
   admin: 0,
@@ -293,6 +294,95 @@ export class TeamService {
     };
   }
 
+  /*
+   * revokeInvitation
+   *
+   * - Admin marks a pending invitation as revoked. The invitation code stops
+   *   working immediately. Already-accepted or already-revoked invites can't
+   *   be revoked again.
+   */
+  async revokeInvitation(input: {
+    actorUserId: string;
+    organizationId: number;
+    invitationId: number;
+  }) {
+    await this.ensureAdminInOrg(input.actorUserId, input.organizationId);
+
+    const invitation = await this.db.query.organizationInvitations.findFirst({
+      where: eq(organizationInvitations.id, input.invitationId),
+    });
+    if (!invitation) {
+      throw new NotFoundError("Invitation");
+    }
+    if (invitation.organizationId !== input.organizationId) {
+      throw new ForbiddenError("Invitation does not belong to this organization");
+    }
+    if (invitation.status === "accepted") {
+      throw new ConflictError("Cannot revoke an accepted invitation");
+    }
+    if (invitation.status === "revoked") {
+      throw new ConflictError("Invitation is already revoked");
+    }
+
+    const [updated] = await this.db
+      .update(organizationInvitations)
+      .set({ status: "revoked", updatedAt: new Date() })
+      .where(eq(organizationInvitations.id, input.invitationId))
+      .returning();
+
+    return updated;
+  }
+
+  /*
+   * resendInvitation
+   *
+   * - Rotates the invitation code (new hash + extended expiry) and flips a
+   *   revoked/expired/pending row back to pending. The old code stops working.
+   * - Accepted invitations cannot be resent.
+   */
+  async resendInvitation(input: {
+    actorUserId: string;
+    organizationId: number;
+    invitationId: number;
+    expiresInDays?: number;
+  }) {
+    await this.ensureAdminInOrg(input.actorUserId, input.organizationId);
+
+    const invitation = await this.db.query.organizationInvitations.findFirst({
+      where: eq(organizationInvitations.id, input.invitationId),
+    });
+    if (!invitation) {
+      throw new NotFoundError("Invitation");
+    }
+    if (invitation.organizationId !== input.organizationId) {
+      throw new ForbiddenError("Invitation does not belong to this organization");
+    }
+    if (invitation.status === "accepted") {
+      throw new ConflictError("Cannot resend an accepted invitation");
+    }
+
+    const invitationCode = this.generateInviteCode();
+    const codeHash = this.hashInviteCode(invitationCode);
+    const expiresInDays = input.expiresInDays ?? 14;
+    const expiresAt = new Date(
+      Date.now() + expiresInDays * 24 * 60 * 60 * 1000
+    );
+
+    const [updated] = await this.db
+      .update(organizationInvitations)
+      .set({
+        codeHash,
+        status: "pending",
+        expiresAt,
+        invitedByUserId: input.actorUserId,
+        updatedAt: new Date(),
+      })
+      .where(eq(organizationInvitations.id, input.invitationId))
+      .returning();
+
+    return { invitation: updated, invitationCode };
+  }
+
   async changeMemberRole(input: {
     actorUserId: string;
     organizationId: number;
@@ -319,6 +409,7 @@ export class TeamService {
       }
     }
 
+    const previousRole = member.role;
     const [updated] = await this.db
       .update(users)
       .set({
@@ -327,6 +418,15 @@ export class TeamService {
       })
       .where(eq(users.id, input.memberId))
       .returning();
+
+    await new AuditLogService(this.db).log({
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId,
+      action: "role.change",
+      targetType: "user",
+      targetId: input.memberId,
+      payload: { from: previousRole, to: input.role, memberEmail: member.email },
+    });
 
     return this.sanitizeUser(updated);
   }

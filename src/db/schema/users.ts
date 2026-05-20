@@ -38,6 +38,9 @@ export const users = pgTable("users", {
     .notNull(),
   googleId: varchar("google_id", { length: 255 }).unique(),
   isOAuthUser: boolean("is_oauth_user").default(false).notNull(),
+  // Admin-managed tag. Doesn't block login or work — used by admin views to
+  // surface a "redistribute their open cases" CTA on the member profile.
+  isOnLeave: boolean("is_on_leave").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   lastLogin: timestamp("last_login"),

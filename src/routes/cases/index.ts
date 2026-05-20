@@ -19,6 +19,8 @@ import {
   FastifySchema,
 } from "fastify";
 import {
+  assignCaseHandler,
+  bulkAssignCasesHandler,
   createCaseHandler,
   deleteCaseHandler,
   getCaseByIdHandler,
@@ -108,6 +110,35 @@ const casesRoutes: FastifyPluginAsync = async (fastify) => {
       } as FastifySchema,
     },
     deleteCaseHandler as any
+  );
+
+  // PATCH /api/cases/:id/assign
+  // - Reassigns the case to a different lawyer (admin/senior or via cases.assign grant).
+  // - Lawyers may also unassign themselves (body.assignedLawyerId = null).
+  fastify.patch(
+    "/:id/assign",
+    {
+      schema: {
+        description: "Assign or reassign case to a lawyer",
+        tags: ["cases"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    assignCaseHandler as any
+  );
+
+  // POST /api/cases/bulk/assign
+  // - Reassigns many cases at once (admin/senior or via delegated.cases.assign).
+  fastify.post(
+    "/bulk/assign",
+    {
+      schema: {
+        description: "Bulk-reassign cases",
+        tags: ["cases"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    bulkAssignCasesHandler as any
   );
 };
 
