@@ -30,11 +30,18 @@ export class ChatService {
     return session;
   }
 
-  /** Get a session by ID, scoped to an organization. */
-  async getSession(sessionId: number, organizationId: number) {
+  /**
+   * Get a session by ID, scoped to (userId, organizationId).
+   *
+   * Chat sessions are PERSONAL — scoping only by org would let any teammate
+   * resume / read another user's chat history. Pass the JWT user id, not just
+   * the org id.
+   */
+  async getSession(sessionId: number, userId: string, organizationId: number) {
     const session = await this.db.query.chatSessions.findFirst({
       where: and(
         eq(chatSessions.id, sessionId),
+        eq(chatSessions.userId, userId),
         eq(chatSessions.organizationId, organizationId)
       ),
       with: {
@@ -99,13 +106,20 @@ export class ChatService {
       .where(eq(chatSessions.id, sessionId));
   }
 
-  /** Delete a session and its messages (cascade). */
-  async deleteSession(sessionId: number, organizationId: number) {
+  /**
+   * Delete a session (cascade deletes messages).
+   *
+   * Scoped to (userId, organizationId) — chat sessions are personal so the
+   * org check alone isn't enough to prevent a teammate from deleting another
+   * user's history.
+   */
+  async deleteSession(sessionId: number, userId: string, organizationId: number) {
     const [deleted] = await this.db
       .delete(chatSessions)
       .where(
         and(
           eq(chatSessions.id, sessionId),
+          eq(chatSessions.userId, userId),
           eq(chatSessions.organizationId, organizationId)
         )
       )

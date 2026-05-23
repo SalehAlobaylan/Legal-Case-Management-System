@@ -31,6 +31,7 @@ import {
 import { caseRegulationLinks } from "../../db/schema";
 import type { Database } from "../../db/connection";
 import { CaseService } from "../../services/case.service";
+import { buildAccessContext } from "../../lib/access-context";
 import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
 import { RegulationMonitorService } from "../../services/regulation-monitor.service";
 import { RegulationSourceService } from "../../services/regulation-source.service";
@@ -147,8 +148,9 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
 
       let caseRegulationIds: number[] | undefined;
       if (typeof caseId === "number" && !Number.isNaN(caseId)) {
+        const access = await buildAccessContext(app.db, user);
         const caseService = new CaseService(app.db);
-        await caseService.getCaseById(caseId, user.orgId);
+        await caseService.getCaseById(caseId, user.orgId, null, access);
 
         const links = await app.db.query.caseRegulationLinks.findMany({
           where: eq(caseRegulationLinks.caseId, caseId),
@@ -210,8 +212,9 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: "Invalid caseId parameter" });
       }
 
+      const access = await buildAccessContext(app.db, user);
       const caseService = new CaseService(app.db);
-      await caseService.getCaseById(caseId, user.orgId);
+      await caseService.getCaseById(caseId, user.orgId, null, access);
 
       const caseLinks = await app.db.query.caseRegulationLinks.findMany({
         where: eq(caseRegulationLinks.caseId, caseId),
@@ -646,14 +649,16 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const insightsService = new RegulationInsightsService(app.db);
-      const state = await insightsService.enqueueLatestInsightsRefresh({
+      // Sync until the BullMQ/Redis queue lands — caller waits up to the AI
+      // service timeout and receives the final ready/failed state.
+      const state = await insightsService.runLatestInsightsRefreshSync({
         regulationId,
         triggeredByUserId: user.id,
         force: Boolean(body?.force),
         languageCode: "ar",
       });
 
-      return reply.code(202).send(state);
+      return reply.send(state);
     }
   );
 
@@ -748,7 +753,9 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const amendmentImpactService = new RegulationAmendmentImpactService(app.db);
-      const state = await amendmentImpactService.enqueueAmendmentImpactRefresh({
+      // Sync until the BullMQ/Redis queue lands — caller waits up to the AI
+      // service timeout and receives the final ready/failed state.
+      const state = await amendmentImpactService.runAmendmentImpactRefreshSync({
         regulationId,
         fromVersion: body.fromVersion,
         toVersion: body.toVersion,
@@ -757,7 +764,7 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
         languageCode: "ar",
       });
 
-      return reply.code(202).send(state);
+      return reply.send(state);
     }
   );
 

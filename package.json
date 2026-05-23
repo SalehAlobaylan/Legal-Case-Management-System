@@ -6,8 +6,11 @@
   "scripts": {
     "predev": "npm run db:migrate && npm run db:seed",
     "start": "tsx src/server.ts",
-    "dev": "concurrently -n api,worker -c blue,green \"tsx watch src/server.ts\" \"tsx watch src/workers/regulation-monitor.worker.ts\"",
+    "dev": "concurrently -n api,worker -c blue,green \"tsx watch src/server.ts\" \"tsx watch src/workers/combined.worker.ts\"",
     "dev:api": "tsx watch src/server.ts",
+    "worker": "tsx src/workers/combined.worker.ts",
+    "worker:scheduler": "tsx src/workers/scheduler.worker.ts",
+    "worker:extraction": "tsx src/workers/document-extraction.worker.ts",
     "worker:reg-monitor": "tsx src/workers/regulation-monitor.worker.ts",
     "ai:evaluate:linking": "tsx src/scripts/evaluate-case-linking.ts",
     "backfill:reg-chunks": "tsx src/scripts/backfill-regulation-chunks.ts",

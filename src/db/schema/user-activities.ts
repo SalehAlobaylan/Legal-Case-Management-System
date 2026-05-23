@@ -3,7 +3,7 @@
  *
  * - Tracks user activity for the profile activity feed.
  * - Types: case, regulation, document, client
- * - Actions: created, updated, closed, reviewed, uploaded
+ * - Actions: created, updated, closed, reviewed, uploaded, deleted, assigned
  */
 
 import {
@@ -15,7 +15,7 @@ import {
   index,
   uuid,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { desc, relations } from "drizzle-orm";
 import { users } from "./users";
 
 export const activityTypeEnum = [
@@ -31,6 +31,8 @@ export const activityActionEnum = [
   "closed",
   "reviewed",
   "uploaded",
+  "deleted",
+  "assigned",
 ] as const;
 
 export const userActivities = pgTable(
@@ -53,6 +55,12 @@ export const userActivities = pgTable(
   (table) => ({
     userIdx: index("user_activities_user_idx").on(table.userId),
     createdAtIdx: index("user_activities_created_at_idx").on(table.createdAt),
+    // Backs the admin /lawyers/:id and /stats recent-activity feeds — filter
+    // by userId then ORDER BY createdAt DESC.
+    userCreatedAtIdx: index("user_activities_user_created_at_idx").on(
+      table.userId,
+      desc(table.createdAt)
+    ),
   })
 );
 

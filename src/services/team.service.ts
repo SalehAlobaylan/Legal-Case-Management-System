@@ -410,22 +410,25 @@ export class TeamService {
     }
 
     const previousRole = member.role;
-    const [updated] = await this.db
-      .update(users)
-      .set({
-        role: input.role,
-        updatedAt: new Date(),
-      })
-      .where(eq(users.id, input.memberId))
-      .returning();
-
-    await new AuditLogService(this.db).log({
-      organizationId: input.organizationId,
-      actorUserId: input.actorUserId,
-      action: "role.change",
-      targetType: "user",
-      targetId: input.memberId,
-      payload: { from: previousRole, to: input.role, memberEmail: member.email },
+    const auditService = new AuditLogService(this.db);
+    const updated = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(users)
+        .set({
+          role: input.role,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, input.memberId))
+        .returning();
+      await auditService.logTx(tx, {
+        organizationId: input.organizationId,
+        actorUserId: input.actorUserId,
+        action: "role.change",
+        targetType: "user",
+        targetId: input.memberId,
+        payload: { from: previousRole, to: input.role, memberEmail: member.email },
+      });
+      return row;
     });
 
     return this.sanitizeUser(updated);

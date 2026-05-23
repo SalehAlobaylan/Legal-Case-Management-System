@@ -12,6 +12,7 @@ import {
   TavilyQuotaExceededError,
 } from "../../services/tavily-search.service";
 import { CaseService } from "../../services/case.service";
+import { buildAccessContext } from "../../lib/access-context";
 import {
   AIClientService,
   type MultiSourceCandidate,
@@ -101,8 +102,9 @@ const caseSourcesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: "Invalid caseId parameter" });
       }
 
+      const access = await buildAccessContext(app.db, user);
       const caseService = new CaseService(app.db);
-      const case_ = await caseService.getCaseById(caseId, user.orgId);
+      const case_ = await caseService.getCaseById(caseId, user.orgId, null, access);
       if (!case_) {
         return reply.status(404).send({ message: "Case not found" });
       }
@@ -342,8 +344,9 @@ const caseSourcesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: "Invalid caseId parameter" });
       }
 
+      const access = await buildAccessContext(app.db, user);
       const caseService = new CaseService(app.db);
-      const case_ = await caseService.getCaseById(caseId, user.orgId);
+      const case_ = await caseService.getCaseById(caseId, user.orgId, null, access);
       if (!case_) {
         return reply.status(404).send({ message: "Case not found" });
       }
@@ -454,8 +457,9 @@ const caseSourcesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: "Invalid caseId parameter" });
       }
 
+      const access = await buildAccessContext(app.db, user);
       const caseService = new CaseService(app.db);
-      const case_ = await caseService.getCaseById(caseId, user.orgId);
+      const case_ = await caseService.getCaseById(caseId, user.orgId, null, access);
       if (!case_) {
         return reply.status(404).send({ message: "Case not found" });
       }

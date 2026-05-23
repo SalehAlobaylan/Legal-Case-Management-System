@@ -22,8 +22,8 @@ import {
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { users } from "../../db/schema/users";
-import { userActivities } from "../../db/schema/user-activities";
-import { organizations as organizationsTable } from "../../db/schema/organizations";
+import { isClosedStatus } from "../../db/schema/cases";
+import { ProfileService } from "../../services/profile.service";
 import { AuditLogService } from "../../services/audit-log.service";
 import type { Database } from "../../db/connection";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
@@ -82,15 +82,15 @@ export async function createCaseHandler(
     user.id
   );
 
-  // Emit the activity row FIRST so notification-delivery failures (WebSocket
-  // emit errors, etc.) never drop the audit trail the admin dashboard relies on.
-  await server.db.insert(userActivities).values({
-    userId: user.id,
-    type: "case",
-    action: "created",
-    title: `${newCase.caseNumber} — ${newCase.title}`,
-    referenceId: newCase.id,
-  });
+  // Activity row first — a notification-delivery failure must not lose the
+  // activity-feed entry the admin dashboard reads from.
+  await new ProfileService(server.db).recordActivity(
+    user.id,
+    "case",
+    "created",
+    `${newCase.caseNumber} — ${newCase.title}`,
+    newCase.id
+  );
 
   const notificationDelivery = new NotificationDeliveryService(
     server.db,
@@ -203,20 +203,11 @@ export async function updateCaseHandler(
   // status transition into closed/archived.
   const transitioningClosed =
     typeof data.status === "string" &&
-    ["closed", "archived"].includes(data.status) &&
-    !["closed", "archived"].includes(existingCase.status);
+    isClosedStatus(data.status) &&
+    !isClosedStatus(existingCase.status);
   if (transitioningClosed) {
-    const [org] = await server.db
-      .select({ settings: organizationsTable.settings })
-      .from(organizationsTable)
-      .where(eq(organizationsTable.id, user.orgId))
-      .limit(1);
-    const closureRequired = Boolean(
-      (org?.settings as { privacy?: { adminClosureRequired?: boolean } } | null | undefined)
-        ?.privacy?.adminClosureRequired
-    );
     if (
-      closureRequired &&
+      access.orgPrivacy.adminClosureRequired &&
       !PermissionService.can(access.effectivePermissions, "delegated.cases.close")
     ) {
       throw new ForbiddenError(
@@ -248,20 +239,20 @@ export async function updateCaseHandler(
     await extractionService.markCaseInsightsStale(id, user.orgId);
   }
 
-  // Emit the activity row FIRST. If the status moved to closed/archived, mark
-  // the action as "closed" so the admin UI can distinguish it. Inserting before
-  // the notification keeps the audit trail intact if delivery fails.
+  // Activity row first — same reason as createCaseHandler. Mark `closed` when
+  // this update transitioned the case into a terminal status so the admin UI
+  // can distinguish it from generic updates.
   const closedNow =
     typeof data.status === "string" &&
-    ["closed", "archived"].includes(data.status) &&
-    !["closed", "archived"].includes(existingCase.status);
-  await server.db.insert(userActivities).values({
-    userId: user.id,
-    type: "case",
-    action: closedNow ? "closed" : "updated",
-    title: `${updated.caseNumber} — ${updated.title}`,
-    referenceId: updated.id,
-  });
+    isClosedStatus(data.status) &&
+    !isClosedStatus(existingCase.status);
+  await new ProfileService(server.db).recordActivity(
+    user.id,
+    "case",
+    closedNow ? "closed" : "updated",
+    `${updated.caseNumber} — ${updated.title}`,
+    updated.id
+  );
 
   const notificationDelivery = new NotificationDeliveryService(
     server.db,
@@ -308,13 +299,12 @@ export async function deleteCaseHandler(
   const existing = await caseService.getCaseById(id, user.orgId, scopedClientId, access);
   await caseService.deleteCase(id, user.orgId, scopedClientId, access);
 
-  await server.db.insert(userActivities).values({
-    userId: user.id,
-    type: "case",
-    action: "updated",
-    title: `Deleted ${existing.caseNumber} — ${existing.title}`,
-    referenceId: null,
-  });
+  await new ProfileService(server.db).recordActivity(
+    user.id,
+    "case",
+    "deleted",
+    `Deleted ${existing.caseNumber} — ${existing.title}`
+  );
 
   return reply.code(204).send();
 }
@@ -382,16 +372,15 @@ export async function assignCaseHandler(
     access
   );
 
-  // Emit an activity row so the admin dashboard activity feed picks it up
-  await server.db.insert(userActivities).values({
-    userId: user.id,
-    type: "case",
-    action: "updated",
-    title: assignedLawyerId
+  await new ProfileService(server.db).recordActivity(
+    user.id,
+    "case",
+    "assigned",
+    assignedLawyerId
       ? `Assigned case ${updated.caseNumber}`
       : `Unassigned case ${updated.caseNumber}`,
-    referenceId: updated.id,
-  });
+    updated.id
+  );
 
   return reply.send({ case: updated });
 }
@@ -451,15 +440,17 @@ export async function bulkAssignCasesHandler(
     access
   );
 
-  // Audit (admin governance event)
-  await new AuditLogService(server.db).log({
+  // Best-effort audit — the bulk update has already committed via CaseService.
+  // targetId is varchar(100) — pack the id list into the jsonb payload instead
+  // so a large bulk doesn't get silently truncated.
+  await new AuditLogService(server.db, request.log).log({
     organizationId: user.orgId,
     actorUserId: user.id,
     action: "case.bulk_assign",
     targetType: "cases",
-    targetId: data.caseIds.join(","),
     payload: {
       assignedLawyerId: data.assignedLawyerId,
+      caseIds: data.caseIds,
       count: updated.length,
     },
   });

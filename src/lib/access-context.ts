@@ -2,8 +2,9 @@
  * Shared access-context helpers
  *
  * - `buildAccessContext`: turns the JWT user into a `CaseAccessContext` carrying
- *   the user's effective permissions. Used by every route that needs to make a
- *   visibility decision.
+ *   the user's effective permissions AND the org's privacy flags. The org row
+ *   is loaded exactly once per request via this function — downstream services
+ *   read flags off the access context instead of re-querying.
  * - `assertCanSeeDocument`: gates per-document endpoints (download / delete /
  *   summarize / insights) under the `restrictDocumentSharing` privacy toggle.
  */
@@ -14,20 +15,51 @@ import { organizations } from "../db/schema/organizations";
 import {
   CaseService,
   type CaseAccessContext,
+  type OrgPrivacy,
 } from "../services/case.service";
 import { PermissionService } from "../services/permission.service";
+
+const EMPTY_ORG_PRIVACY: OrgPrivacy = {
+  documents: false,
+  clients: false,
+  teamDirectory: false,
+  adminClosureRequired: false,
+  restrictCaseVisibility: false,
+};
 
 export async function buildAccessContext(
   db: Database,
   user: { id: string; role: string; orgId: number }
 ): Promise<CaseAccessContext> {
   const permService = new PermissionService(db);
-  const effectivePermissions = await permService.getEffectivePermissions(
-    user.id,
-    user.role,
-    user.orgId
-  );
-  return { userId: user.id, effectivePermissions };
+  const [effectivePermissions, orgPrivacy] = await Promise.all([
+    permService.getEffectivePermissions(user.id, user.role, user.orgId),
+    loadOrgPrivacy(db, user.orgId),
+  ]);
+  return { userId: user.id, effectivePermissions, orgPrivacy };
+}
+
+async function loadOrgPrivacy(db: Database, orgId: number): Promise<OrgPrivacy> {
+  const [org] = await db
+    .select({
+      settings: organizations.settings,
+      restrictCaseVisibility: organizations.restrictCaseVisibility,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  if (!org) return EMPTY_ORG_PRIVACY;
+  const privacy = (org.settings as
+    | { privacy?: Partial<OrgPrivacy> }
+    | null
+    | undefined)?.privacy;
+  return {
+    documents: Boolean(privacy?.documents),
+    clients: Boolean(privacy?.clients),
+    teamDirectory: Boolean(privacy?.teamDirectory),
+    adminClosureRequired: Boolean(privacy?.adminClosureRequired),
+    restrictCaseVisibility: Boolean(org.restrictCaseVisibility),
+  };
 }
 
 /**
@@ -38,34 +70,27 @@ export async function buildAccessContext(
  *  2. If `settings.privacy.documents` is OFF → allow (only org-scoping applies, handled by callers).
  *  3. Otherwise — must be able to read the parent case under visibility rules
  *     (delegates to `CaseService.getCaseById`, which throws `ForbiddenError`).
+ *
+ * Callers MAY pass a prebuilt `access` to skip the per-request rebuild. When
+ * omitted, this helper does its own buildAccessContext (still one org-row read
+ * thanks to the request-level merge inside buildAccessContext).
  */
 export async function assertCanSeeDocument(input: {
   db: Database;
   user: { id: string; role: string; orgId: number };
   document: { caseId: number };
+  access?: CaseAccessContext;
 }): Promise<void> {
-  const access = await buildAccessContext(input.db, input.user);
+  const access = input.access ?? (await buildAccessContext(input.db, input.user));
 
-  // Fast path — explicit bypasses.
   if (
     PermissionService.can(access.effectivePermissions, "delegated.documents.viewAll")
   ) {
     return;
   }
 
-  // Check whether the org has the document-sharing restriction enabled.
-  const [org] = await input.db
-    .select({ settings: organizations.settings })
-    .from(organizations)
-    .where(eq(organizations.id, input.user.orgId))
-    .limit(1);
-  const restrictDocs = Boolean(
-    (org?.settings as { privacy?: { documents?: boolean } } | null | undefined)
-      ?.privacy?.documents
-  );
-  if (!restrictDocs) return;
+  if (!access.orgPrivacy.documents) return;
 
-  // Defer to case visibility — throws ForbiddenError if the case is hidden.
   const caseService = new CaseService(input.db);
   await caseService.getCaseById(
     input.document.caseId,

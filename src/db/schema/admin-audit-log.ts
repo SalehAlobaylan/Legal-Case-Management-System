@@ -19,7 +19,7 @@ import {
   timestamp,
   index,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { desc, relations } from "drizzle-orm";
 import { organizations } from "./organizations";
 import { users } from "./users";
 
@@ -48,6 +48,11 @@ export const adminAuditLog = pgTable(
       table.organizationId,
       table.action,
       table.createdAt
+    ),
+    // Backs `AuditLogService.list`: WHERE org=? AND id < ? ORDER BY id DESC.
+    orgIdDescIdx: index("admin_audit_log_org_id_desc_idx").on(
+      table.organizationId,
+      desc(table.id)
     ),
   })
 );

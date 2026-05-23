@@ -10,6 +10,22 @@
 import { and, eq } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import { userPermissionGrants } from "../db/schema/user-permission-grants";
+import { ValidationError } from "../utils/errors";
+
+// Drizzle's transaction tx-handle — same write surface as Database.
+type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+// Permissions an admin can grant to a team member. Anything outside this set is
+// rejected at the service boundary so future callers can't write arbitrary
+// strings into the grants table.
+export const GRANTABLE_PERMISSIONS = [
+  "delegated.cases.assign",
+  "delegated.cases.viewAll",
+  "delegated.cases.close",
+  "delegated.documents.viewAll",
+  "delegated.clients.viewAll",
+] as const;
+export type GrantablePermission = (typeof GRANTABLE_PERMISSIONS)[number];
 
 const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
   admin: ["*"],
@@ -105,13 +121,22 @@ export class PermissionService {
    * - Inserts a grant row. Idempotent via the unique index, so repeat calls
    *   no-op gracefully.
    */
-  async grantPermission(input: {
-    userId: string;
-    organizationId: number;
-    permission: string;
-    grantedBy: string;
-  }) {
-    await this.db
+  async grantPermission(
+    input: {
+      userId: string;
+      organizationId: number;
+      permission: string;
+      grantedBy: string;
+    },
+    tx?: Tx
+  ) {
+    if (
+      !(GRANTABLE_PERMISSIONS as readonly string[]).includes(input.permission)
+    ) {
+      throw new ValidationError("Unknown permission");
+    }
+    const exec = tx ?? this.db;
+    await exec
       .insert(userPermissionGrants)
       .values({
         userId: input.userId,
@@ -127,12 +152,16 @@ export class PermissionService {
    *
    * - Deletes a single permission grant for the user in this org.
    */
-  async revokePermission(input: {
-    userId: string;
-    organizationId: number;
-    permission: string;
-  }) {
-    await this.db
+  async revokePermission(
+    input: {
+      userId: string;
+      organizationId: number;
+      permission: string;
+    },
+    tx?: Tx
+  ) {
+    const exec = tx ?? this.db;
+    await exec
       .delete(userPermissionGrants)
       .where(
         and(

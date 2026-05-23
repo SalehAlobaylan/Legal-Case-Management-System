@@ -4,15 +4,22 @@
  * - Writes governance events (role changes, permission grants, settings,
  *   announcements, bulk assigns, on-leave toggles) into `admin_audit_log`.
  * - `log()` NEVER throws: a logging failure must not break the underlying
- *   action. Errors go to console only.
+ *   action. Errors go through the injected Fastify logger when available.
+ * - `logTx(tx, ...)` is the transactional variant — used when the audit row
+ *   MUST land or the surrounding mutation must roll back. Throws on failure.
  * - `list()` supports a simple cursor (`before`) + `action` filter for the
  *   admin dashboard feed.
  */
 
 import { and, desc, eq, lt } from "drizzle-orm";
+import type { FastifyBaseLogger } from "fastify";
 import type { Database } from "../db/connection";
 import { adminAuditLog } from "../db/schema/admin-audit-log";
 import { users } from "../db/schema/users";
+
+// Drizzle's transaction callback receives a tx with the same insert/update/
+// delete surface as the top-level db. Derive the type so call sites stay typed.
+type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 /**
  * Canonical list of audit actions. Keeping this as a TS union (not a DB enum)
@@ -33,34 +40,55 @@ export type AuditAction = (typeof auditActions)[number];
 
 export interface AuditLogInput {
   organizationId: number;
-  actorUserId: string;
+  // null when the event is system-initiated (cron, webhook). The column itself
+  // is nullable (`onDelete: "set null"`) so deleted-user history survives.
+  actorUserId: string | null;
   action: AuditAction;
   targetType?: string;
   targetId?: string | number;
   payload?: Record<string, unknown>;
 }
 
+function rowFromInput(input: AuditLogInput) {
+  return {
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    action: input.action,
+    targetType: input.targetType ?? null,
+    targetId:
+      input.targetId === undefined || input.targetId === null
+        ? null
+        : String(input.targetId),
+    payload: input.payload ?? {},
+  };
+}
+
 export class AuditLogService {
-  constructor(private db: Database) {}
+  constructor(private db: Database, private logger?: FastifyBaseLogger) {}
 
   async log(input: AuditLogInput): Promise<void> {
     try {
-      await this.db.insert(adminAuditLog).values({
-        organizationId: input.organizationId,
-        actorUserId: input.actorUserId,
-        action: input.action,
-        targetType: input.targetType ?? null,
-        targetId:
-          input.targetId === undefined || input.targetId === null
-            ? null
-            : String(input.targetId),
-        payload: input.payload ?? {},
-      });
+      await this.db.insert(adminAuditLog).values(rowFromInput(input));
     } catch (err) {
       // Logging must never break the action it's recording.
-      // eslint-disable-next-line no-console
-      console.error("[AuditLogService.log] failed", err);
+      if (this.logger) {
+        this.logger.error({ err, action: input.action }, "audit log failed");
+      } else {
+        // eslint-disable-next-line no-console
+        console.error("[AuditLogService.log] failed", err);
+      }
     }
+  }
+
+  /*
+   * logTx
+   *
+   * - Transactional variant. Runs inside the caller's db.transaction so the
+   *   audit row and the surrounding mutation succeed-or-fail together.
+   * - Throws on failure (no swallow) — the surrounding transaction rolls back.
+   */
+  async logTx(tx: Tx, input: AuditLogInput): Promise<void> {
+    await tx.insert(adminAuditLog).values(rowFromInput(input));
   }
 
   async list(

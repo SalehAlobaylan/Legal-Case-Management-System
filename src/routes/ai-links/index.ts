@@ -11,6 +11,7 @@ import {
 } from "../../services/ai-client.service";
 import { LinkService } from "../../services/link.service";
 import { CaseService } from "../../services/case.service";
+import { buildAccessContext } from "../../lib/access-context";
 import { RegulationSubscriptionService } from "../../services/regulation-subscription.service";
 import { DocumentExtractionService } from "../../services/document-extraction.service";
 import { NotificationDeliveryService } from "../../services/notification-delivery.service";
@@ -167,8 +168,9 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const access = await buildAccessContext(app.db, user);
       const caseService = new CaseService(app.db);
-      const case_ = await caseService.getCaseById(caseId, user.orgId);
+      const case_ = await caseService.getCaseById(caseId, user.orgId, null, access);
       const extractionService = new DocumentExtractionService(app.db);
       const documentContext = await extractionService.prepareCaseFragments(
         caseId,
@@ -542,8 +544,9 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const access = await buildAccessContext(app.db, user);
       const caseService = new CaseService(app.db);
-      await caseService.getCaseById(caseId, user.orgId);
+      await caseService.getCaseById(caseId, user.orgId, null, access);
 
       const linkService = new LinkService(app.db);
       const links = await linkService.getLinksByCaseId(caseId);
@@ -593,8 +596,16 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Org-scope + per-assignee visibility: resolve the link → its case, then
+      // require the caller to be able to see that case under the visibility
+      // model before allowing the mutation.
       const linkService = new LinkService(app.db);
-      const link = await linkService.verifyLink(linkId, user.id);
+      const linkCaseId = await linkService.findLinkCaseId(linkId, user.orgId);
+      const access = await buildAccessContext(app.db, user);
+      const caseService = new CaseService(app.db);
+      await caseService.getCaseById(linkCaseId, user.orgId, null, access);
+
+      const link = await linkService.verifyLink(linkId, user.id, user.orgId);
       const serializedLink = serializeLinkForClient(link);
 
       // Broadcast verification event so clients can update UI in real-time
@@ -637,8 +648,16 @@ const aiLinksRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Org-scope + per-assignee visibility: resolve the link → its case, then
+      // require the caller to be able to see that case under the visibility
+      // model before allowing the deletion.
       const linkService = new LinkService(app.db);
-      await linkService.deleteLink(linkId);
+      const linkCaseId = await linkService.findLinkCaseId(linkId, user.orgId);
+      const access = await buildAccessContext(app.db, user);
+      const caseService = new CaseService(app.db);
+      await caseService.getCaseById(linkCaseId, user.orgId, null, access);
+
+      await linkService.deleteLink(linkId, user.orgId);
 
       // Broadcast dismiss event so clients can update UI in real-time
       if (typeof app.broadcastToOrg === "function" && user) {

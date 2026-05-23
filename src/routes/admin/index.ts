@@ -14,9 +14,23 @@ import {
   FastifyRequest,
   FastifySchema,
 } from "fastify";
-import { and, asc, count, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  notInArray,
+  sql,
+} from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../../db/connection";
-import { cases } from "../../db/schema/cases";
+import { cases, CLOSED_STATUSES } from "../../db/schema/cases";
 import { users } from "../../db/schema/users";
 import { userActivities } from "../../db/schema/user-activities";
 import { caseRegulationLinks } from "../../db/schema/case-regulation-links";
@@ -28,6 +42,7 @@ import {
   auditActions,
   type AuditAction,
 } from "../../services/audit-log.service";
+import { requireAdmin } from "../../lib/require-admin";
 
 /*
  * bucketHearing
@@ -97,88 +112,87 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
 
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
 
-      // Aggregate case counts in a single grouped query
-      const [aggregate] = await db
-        .select({
-          total: count(),
-          open: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'open')`,
-          inProgress: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'in_progress')`,
-          pendingHearing: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'pending_hearing')`,
-          closed: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} IN ('closed','archived'))`,
-          unassigned: sql<number>`COUNT(*) FILTER (WHERE ${cases.assignedLawyerId} IS NULL)`,
-        })
-        .from(cases)
-        .where(eq(cases.organizationId, user.orgId));
-
-      // Workload per lawyer (active = not closed/archived)
-      const workload = await db
-        .select({
-          lawyerId: users.id,
-          fullName: users.fullName,
-          email: users.email,
-          role: users.role,
-          totalCases: count(cases.id),
-          openCases: sql<number>`COUNT(${cases.id}) FILTER (WHERE ${cases.status} NOT IN ('closed','archived'))`,
-        })
-        .from(users)
-        .leftJoin(
-          cases,
-          and(
-            eq(cases.assignedLawyerId, users.id),
-            eq(cases.organizationId, user.orgId)
+      const [
+        [aggregate],
+        workload,
+        unassignedCases,
+        recentActivity,
+        hearingRows,
+      ] = await Promise.all([
+        db
+          .select({
+            total: count(),
+            open: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'open')`,
+            inProgress: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'in_progress')`,
+            pendingHearing: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'pending_hearing')`,
+            closed: sql<number>`COUNT(*) FILTER (WHERE ${inArray(cases.status, CLOSED_STATUSES)})`,
+            unassigned: sql<number>`COUNT(*) FILTER (WHERE ${cases.assignedLawyerId} IS NULL)`,
+          })
+          .from(cases)
+          .where(eq(cases.organizationId, user.orgId)),
+        db
+          .select({
+            lawyerId: users.id,
+            fullName: users.fullName,
+            email: users.email,
+            role: users.role,
+            totalCases: count(cases.id),
+            openCases: sql<number>`COUNT(${cases.id}) FILTER (WHERE ${notInArray(cases.status, CLOSED_STATUSES)})`,
+          })
+          .from(users)
+          .leftJoin(
+            cases,
+            and(
+              eq(cases.assignedLawyerId, users.id),
+              eq(cases.organizationId, user.orgId)
+            )
           )
-        )
-        .where(eq(users.organizationId, user.orgId))
-        .groupBy(users.id, users.fullName, users.email, users.role)
-        .orderBy(desc(sql<number>`COUNT(${cases.id})`));
+          .where(eq(users.organizationId, user.orgId))
+          .groupBy(users.id, users.fullName, users.email, users.role)
+          .orderBy(desc(sql<number>`COUNT(${cases.id})`)),
+        db.query.cases.findMany({
+          where: and(
+            eq(cases.organizationId, user.orgId),
+            isNull(cases.assignedLawyerId)
+          ),
+          orderBy: [desc(cases.createdAt)],
+          limit: 25,
+        }),
+        db
+          .select({
+            id: userActivities.id,
+            userId: userActivities.userId,
+            userName: users.fullName,
+            type: userActivities.type,
+            action: userActivities.action,
+            title: userActivities.title,
+            referenceId: userActivities.referenceId,
+            createdAt: userActivities.createdAt,
+          })
+          .from(userActivities)
+          .innerJoin(users, eq(userActivities.userId, users.id))
+          .where(eq(users.organizationId, user.orgId))
+          .orderBy(desc(userActivities.createdAt))
+          .limit(20),
+        db.query.cases.findMany({
+          where: and(
+            eq(cases.organizationId, user.orgId),
+            isNotNull(cases.nextHearing),
+            notInArray(cases.status, CLOSED_STATUSES)
+          ),
+          with: {
+            assignedLawyer: { columns: { id: true, fullName: true, email: true } },
+          },
+          orderBy: [asc(cases.nextHearing)],
+          limit: 500,
+        }),
+      ]);
 
-      // Unassigned cases — surfaced separately so admins can act on them
-      const unassignedCases = await db.query.cases.findMany({
-        where: and(
-          eq(cases.organizationId, user.orgId),
-          isNull(cases.assignedLawyerId)
-        ),
-        orderBy: [desc(cases.createdAt)],
-        limit: 25,
-      });
-
-      // Recent activity — last 20 across the org's users
-      const recentActivity = await db
-        .select({
-          id: userActivities.id,
-          userId: userActivities.userId,
-          userName: users.fullName,
-          type: userActivities.type,
-          action: userActivities.action,
-          title: userActivities.title,
-          referenceId: userActivities.referenceId,
-          createdAt: userActivities.createdAt,
-        })
-        .from(userActivities)
-        .innerJoin(users, eq(userActivities.userId, users.id))
-        .where(eq(users.organizationId, user.orgId))
-        .orderBy(desc(userActivities.createdAt))
-        .limit(20);
-
+      // workload includes every user in the org (admins/clerks too); count is
+      // intentionally "people with any case assignment capacity", not "lawyers".
       const lawyerCount = workload.length;
-
-      // Hearings pipeline — bucket org cases with a `nextHearing` set.
-      // Skip closed/archived cases so resolved matters don't clutter the view.
-      const hearingRows = await db.query.cases.findMany({
-        where: and(
-          eq(cases.organizationId, user.orgId),
-          isNotNull(cases.nextHearing),
-          sql`${cases.status} NOT IN ('closed','archived')`
-        ),
-        with: {
-          assignedLawyer: { columns: { id: true, fullName: true, email: true } },
-        },
-        orderBy: [asc(cases.nextHearing)],
-      });
 
       const now = new Date();
       const hearings: Record<HearingBucket, Array<{
@@ -262,82 +276,84 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const { user } = request as RequestWithUser;
       const { id } = request.params as { id: string };
 
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
-      // Basic UUID shape check — keeps Postgres from erroring on bad input.
-      if (!/^[0-9a-fA-F-]{36}$/.test(id)) {
+      if (!requireAdmin(request, reply)) return;
+      if (!z.string().uuid().safeParse(id).success) {
         return reply.status(400).send({ message: "Invalid lawyer id" });
       }
 
-      // 1) Lawyer row, scoped to the admin's org.
-      const [lawyer] = await db
-        .select({
-          id: users.id,
-          fullName: users.fullName,
-          email: users.email,
-          role: users.role,
-          phone: users.phone,
-          specialization: users.specialization,
-          avatarUrl: users.avatarUrl,
-          location: users.location,
-          isOnLeave: users.isOnLeave,
-          createdAt: users.createdAt,
-          lastLogin: users.lastLogin,
-        })
-        .from(users)
-        .where(and(eq(users.id, id), eq(users.organizationId, user.orgId)))
-        .limit(1);
-      if (!lawyer) {
-        return reply.status(404).send({ message: "Lawyer not found" });
-      }
-
-      // 2) Case counts for this lawyer.
-      const [counts] = await db
-        .select({
-          total: count(),
-          open: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'open')`,
-          inProgress: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'in_progress')`,
-          pendingHearing: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'pending_hearing')`,
-          closed: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} IN ('closed','archived'))`,
-          upcomingHearings: sql<number>`COUNT(*) FILTER (WHERE ${cases.nextHearing} IS NOT NULL AND ${cases.nextHearing} >= NOW() AND ${cases.status} NOT IN ('closed','archived'))`,
-        })
-        .from(cases)
-        .where(
-          and(eq(cases.organizationId, user.orgId), eq(cases.assignedLawyerId, id))
-        );
-
-      // 3) Full case list — reuse CaseService so visibility/access logic stays
-      //    centralized. Admins bypass restrict-visibility via their `*` perm.
       const caseService = new CaseService(db);
+      // Admins bypass restrict-visibility via `*`, so orgPrivacy values are
+      // irrelevant — pass an all-false stub.
       const adminAccess = {
         userId: user.id,
         effectivePermissions: new Set<string>(["*"]),
+        orgPrivacy: {
+          documents: false,
+          clients: false,
+          teamDirectory: false,
+          adminClosureRequired: false,
+          restrictCaseVisibility: false,
+        },
       };
-      const lawyerCases = await caseService.getCasesByOrganization(
-        user.orgId,
-        { assignedLawyerId: id },
-        null,
-        adminAccess
-      );
 
-      // 4) Recent activity for this user.
-      const recentActivity = await db
-        .select({
-          id: userActivities.id,
-          userId: userActivities.userId,
-          userName: users.fullName,
-          type: userActivities.type,
-          action: userActivities.action,
-          title: userActivities.title,
-          referenceId: userActivities.referenceId,
-          createdAt: userActivities.createdAt,
-        })
-        .from(userActivities)
-        .innerJoin(users, eq(userActivities.userId, users.id))
-        .where(eq(userActivities.userId, id))
-        .orderBy(desc(userActivities.createdAt))
-        .limit(25);
+      const [[lawyer], [counts], lawyerCases, recentActivity] = await Promise.all([
+        db
+          .select({
+            id: users.id,
+            fullName: users.fullName,
+            email: users.email,
+            role: users.role,
+            phone: users.phone,
+            specialization: users.specialization,
+            avatarUrl: users.avatarUrl,
+            location: users.location,
+            isOnLeave: users.isOnLeave,
+            createdAt: users.createdAt,
+            lastLogin: users.lastLogin,
+          })
+          .from(users)
+          .where(and(eq(users.id, id), eq(users.organizationId, user.orgId)))
+          .limit(1),
+        db
+          .select({
+            total: count(),
+            open: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'open')`,
+            inProgress: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'in_progress')`,
+            pendingHearing: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'pending_hearing')`,
+            closed: sql<number>`COUNT(*) FILTER (WHERE ${inArray(cases.status, CLOSED_STATUSES)})`,
+            upcomingHearings: sql<number>`COUNT(*) FILTER (WHERE ${cases.nextHearing} IS NOT NULL AND ${cases.nextHearing} >= NOW() AND ${cases.status} NOT IN ('closed','archived'))`,
+          })
+          .from(cases)
+          .where(
+            and(eq(cases.organizationId, user.orgId), eq(cases.assignedLawyerId, id))
+          ),
+        caseService.getCasesByOrganization(
+          user.orgId,
+          { assignedLawyerId: id },
+          null,
+          adminAccess
+        ),
+        db
+          .select({
+            id: userActivities.id,
+            userId: userActivities.userId,
+            userName: users.fullName,
+            type: userActivities.type,
+            action: userActivities.action,
+            title: userActivities.title,
+            referenceId: userActivities.referenceId,
+            createdAt: userActivities.createdAt,
+          })
+          .from(userActivities)
+          .innerJoin(users, eq(userActivities.userId, users.id))
+          .where(eq(userActivities.userId, id))
+          .orderBy(desc(userActivities.createdAt))
+          .limit(25),
+      ]);
+
+      if (!lawyer) {
+        return reply.status(404).send({ message: "Lawyer not found" });
+      }
 
       return reply.send({
         lawyer,
@@ -372,87 +388,93 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
 
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000);
       const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000);
 
-      // Stale cases — open status & not touched in 30+ days
-      const staleCases = await db.query.cases.findMany({
-        where: and(
-          eq(cases.organizationId, user.orgId),
-          sql`${cases.status} NOT IN ('closed','archived')`,
-          lt(cases.updatedAt, thirtyDaysAgo)
-        ),
-        orderBy: [asc(cases.updatedAt)],
-        with: {
-          assignedLawyer: { columns: { id: true, fullName: true, email: true } },
-        },
-        limit: 10,
-      });
-      const [staleCountRow] = await db
-        .select({ c: count() })
-        .from(cases)
-        .where(
-          and(
-            eq(cases.organizationId, user.orgId),
-            sql`${cases.status} NOT IN ('closed','archived')`,
-            lt(cases.updatedAt, thirtyDaysAgo)
-          )
-        );
+      const regUpdatesWhere = and(
+        eq(cases.organizationId, user.orgId),
+        notInArray(cases.status, CLOSED_STATUSES),
+        gt(regulationVersions.fetchedAt, sevenDaysAgo)
+      );
 
-      // AI suggestions awaiting review — verified=false on org cases
-      const awaitingReview = await db
-        .select({
-          caseId: cases.id,
-          caseNumber: cases.caseNumber,
-          title: cases.title,
-          unreviewed: count(caseRegulationLinks.id),
-        })
-        .from(caseRegulationLinks)
-        .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
-        .where(
-          and(
-            eq(cases.organizationId, user.orgId),
-            eq(caseRegulationLinks.verified, false)
-          )
-        )
-        .groupBy(cases.id, cases.caseNumber, cases.title)
-        .orderBy(desc(count(caseRegulationLinks.id)))
-        .limit(10);
+      const [staleCases, [staleCountRow], awaitingReview, regUpdates, [regUpdatesCountRow]] =
+        await Promise.all([
+          db.query.cases.findMany({
+            where: and(
+              eq(cases.organizationId, user.orgId),
+              notInArray(cases.status, CLOSED_STATUSES),
+              lt(cases.updatedAt, thirtyDaysAgo)
+            ),
+            orderBy: [asc(cases.updatedAt)],
+            with: {
+              assignedLawyer: { columns: { id: true, fullName: true, email: true } },
+            },
+            limit: 10,
+          }),
+          db
+            .select({ c: count() })
+            .from(cases)
+            .where(
+              and(
+                eq(cases.organizationId, user.orgId),
+                notInArray(cases.status, CLOSED_STATUSES),
+                lt(cases.updatedAt, thirtyDaysAgo)
+              )
+            ),
+          db
+            .select({
+              caseId: cases.id,
+              caseNumber: cases.caseNumber,
+              title: cases.title,
+              unreviewed: count(caseRegulationLinks.id),
+            })
+            .from(caseRegulationLinks)
+            .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
+            .where(
+              and(
+                eq(cases.organizationId, user.orgId),
+                eq(caseRegulationLinks.verified, false)
+              )
+            )
+            .groupBy(cases.id, cases.caseNumber, cases.title)
+            .orderBy(desc(count(caseRegulationLinks.id)))
+            .limit(10),
+          db
+            .select({
+              caseId: cases.id,
+              caseNumber: cases.caseNumber,
+              title: cases.title,
+              regulationId: regulations.id,
+              regulationTitle: regulations.title,
+              fetchedAt: regulationVersions.fetchedAt,
+            })
+            .from(regulationVersions)
+            .innerJoin(
+              caseRegulationLinks,
+              eq(caseRegulationLinks.regulationId, regulationVersions.regulationId)
+            )
+            .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
+            .innerJoin(regulations, eq(regulations.id, regulationVersions.regulationId))
+            .where(regUpdatesWhere)
+            .orderBy(desc(regulationVersions.fetchedAt))
+            .limit(10),
+          db
+            .select({ c: count() })
+            .from(regulationVersions)
+            .innerJoin(
+              caseRegulationLinks,
+              eq(caseRegulationLinks.regulationId, regulationVersions.regulationId)
+            )
+            .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
+            .where(regUpdatesWhere),
+        ]);
+
       const totalAwaiting = awaitingReview.reduce(
         (sum, r) => sum + Number(r.unreviewed ?? 0),
         0
       );
-
-      // Regulation updates affecting open cases — versions fetched in last 7d
-      const regUpdates = await db
-        .select({
-          caseId: cases.id,
-          caseNumber: cases.caseNumber,
-          title: cases.title,
-          regulationId: regulations.id,
-          regulationTitle: regulations.title,
-          fetchedAt: regulationVersions.fetchedAt,
-        })
-        .from(regulationVersions)
-        .innerJoin(
-          caseRegulationLinks,
-          eq(caseRegulationLinks.regulationId, regulationVersions.regulationId)
-        )
-        .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
-        .innerJoin(regulations, eq(regulations.id, regulationVersions.regulationId))
-        .where(
-          and(
-            eq(cases.organizationId, user.orgId),
-            sql`${cases.status} NOT IN ('closed','archived')`,
-            gt(regulationVersions.fetchedAt, sevenDaysAgo)
-          )
-        )
-        .orderBy(desc(regulationVersions.fetchedAt))
-        .limit(10);
 
       return reply.send({
         stale: {
@@ -475,7 +497,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
           })),
         },
         regulationUpdates: {
-          count: regUpdates.length,
+          count: Number(regUpdatesCountRow?.c ?? 0),
           items: regUpdates,
         },
       });
@@ -499,46 +521,53 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
 
       const twelveWeeksAgo = new Date(Date.now() - 12 * 7 * 86_400_000);
 
-      // Weekly buckets of cases created
-      const created = await db
-        .select({
-          week: sql<string>`to_char(date_trunc('week', ${cases.createdAt}), 'YYYY-MM-DD')`,
-          n: count(),
-        })
-        .from(cases)
-        .where(
-          and(
-            eq(cases.organizationId, user.orgId),
-            gt(cases.createdAt, twelveWeeksAgo)
+      const [created, closed, statusBreakdown, caseTypeBreakdown] = await Promise.all([
+        db
+          .select({
+            week: sql<string>`to_char(date_trunc('week', ${cases.createdAt}), 'YYYY-MM-DD')`,
+            n: count(),
+          })
+          .from(cases)
+          .where(
+            and(
+              eq(cases.organizationId, user.orgId),
+              gt(cases.createdAt, twelveWeeksAgo)
+            )
           )
-        )
-        .groupBy(sql`date_trunc('week', ${cases.createdAt})`)
-        .orderBy(sql`date_trunc('week', ${cases.createdAt})`);
-
-      // Weekly buckets of case-closures from user_activities (action='closed')
-      const closed = await db
-        .select({
-          week: sql<string>`to_char(date_trunc('week', ${userActivities.createdAt}), 'YYYY-MM-DD')`,
-          n: count(),
-        })
-        .from(userActivities)
-        .innerJoin(users, eq(userActivities.userId, users.id))
-        .where(
-          and(
-            eq(users.organizationId, user.orgId),
-            eq(userActivities.type, "case"),
-            eq(userActivities.action, "closed"),
-            gt(userActivities.createdAt, twelveWeeksAgo)
+          .groupBy(sql`date_trunc('week', ${cases.createdAt})`)
+          .orderBy(sql`date_trunc('week', ${cases.createdAt})`),
+        db
+          .select({
+            week: sql<string>`to_char(date_trunc('week', ${userActivities.createdAt}), 'YYYY-MM-DD')`,
+            n: count(),
+          })
+          .from(userActivities)
+          .innerJoin(users, eq(userActivities.userId, users.id))
+          .where(
+            and(
+              eq(users.organizationId, user.orgId),
+              eq(userActivities.type, "case"),
+              eq(userActivities.action, "closed"),
+              gt(userActivities.createdAt, twelveWeeksAgo)
+            )
           )
-        )
-        .groupBy(sql`date_trunc('week', ${userActivities.createdAt})`)
-        .orderBy(sql`date_trunc('week', ${userActivities.createdAt})`);
+          .groupBy(sql`date_trunc('week', ${userActivities.createdAt})`)
+          .orderBy(sql`date_trunc('week', ${userActivities.createdAt})`),
+        db
+          .select({ status: cases.status, n: count() })
+          .from(cases)
+          .where(eq(cases.organizationId, user.orgId))
+          .groupBy(cases.status),
+        db
+          .select({ caseType: cases.caseType, n: count() })
+          .from(cases)
+          .where(eq(cases.organizationId, user.orgId))
+          .groupBy(cases.caseType),
+      ]);
 
       // Merge into a single timeline (one row per week with both metrics)
       const weekMap = new Map<string, { created: number; closed: number }>();
@@ -552,20 +581,6 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const casesOverTime = Array.from(weekMap.entries())
         .map(([week, v]) => ({ week, ...v }))
         .sort((a, b) => a.week.localeCompare(b.week));
-
-      // Status breakdown — all cases regardless of date
-      const statusBreakdown = await db
-        .select({ status: cases.status, n: count() })
-        .from(cases)
-        .where(eq(cases.organizationId, user.orgId))
-        .groupBy(cases.status);
-
-      // Case type breakdown
-      const caseTypeBreakdown = await db
-        .select({ caseType: cases.caseType, n: count() })
-        .from(cases)
-        .where(eq(cases.organizationId, user.orgId))
-        .groupBy(cases.caseType);
 
       return reply.send({
         casesOverTime,
@@ -598,20 +613,17 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
       const q = request.query as {
         limit?: string;
         before?: string;
         action?: string;
       };
-      const limit = Math.min(Math.max(parseInt(q.limit ?? "50", 10) || 50, 1), 200);
       const before = q.before ? parseInt(q.before, 10) : undefined;
-      const action: AuditAction | undefined = auditActions.includes(
-        q.action as AuditAction
-      )
-        ? (q.action as AuditAction)
+      const limit = q.limit ? parseInt(q.limit, 10) : undefined;
+      const parsedAction = z.enum(auditActions).optional().safeParse(q.action);
+      const action: AuditAction | undefined = parsedAction.success
+        ? parsedAction.data
         : undefined;
 
       const rows = await new AuditLogService(db).list(user.orgId, {

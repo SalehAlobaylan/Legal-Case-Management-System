@@ -18,6 +18,7 @@ import { AIClientService, type ChatStreamPayload } from "../../services/ai-clien
 import { CaseService } from "../../services/case.service";
 import { ChatService } from "../../services/chat.service";
 import { ChatContextService } from "../../services/chat-context.service";
+import { buildAccessContext } from "../../lib/access-context";
 import type { ChatCitationRow } from "../../db/schema/chat-sessions";
 import type { Database } from "../../db/connection";
 import { regulations } from "../../db/schema";
@@ -67,6 +68,61 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
     app.addHook("onRequest", app.authenticate);
 
     // -----------------------------------------------------------------------
+    // GET /api/ai/health — lightweight status for the frontend
+    //
+    // Proxies the AI microservice's /health/embeddings so the UI can show a
+    // friendly "AI assistant is warming up" banner whenever the local
+    // fallback model is loading or actively serving. Cached briefly so a
+    // dashboard refresh doesn't hammer the AI service.
+    // -----------------------------------------------------------------------
+    let healthCache: { at: number; payload: unknown } | null = null;
+    const HEALTH_CACHE_TTL_MS = 5_000;
+    fastify.get(
+        "/health",
+        {
+            schema: {
+                description: "AI assistant readiness for the UI",
+                tags: ["ai"],
+                security: [{ bearerAuth: [] }],
+            } as FastifySchema,
+        },
+        async (_request: FastifyRequest, reply: FastifyReply) => {
+            const now = Date.now();
+            if (healthCache && now - healthCache.at < HEALTH_CACHE_TTL_MS) {
+                return reply.send(healthCache.payload);
+            }
+            try {
+                const aiClient = new AIClientService();
+                const raw = await aiClient.getEmbeddingsHealth();
+                const payload = {
+                    ready: !raw.warming_up,
+                    warmingUp: Boolean(raw.warming_up),
+                    fallbackActive: Boolean(raw.fallback_active),
+                    // Friendly message the UI can drop straight into a banner.
+                    // Kept generic on purpose — no model names, no infra terms.
+                    message: raw.warming_up
+                        ? "AI assistant is warming up — your request will be ready shortly."
+                        : raw.fallback_active
+                            ? "AI assistant is running on the backup service. Some requests may be slightly slower than usual."
+                            : null,
+                };
+                healthCache = { at: now, payload };
+                return reply.send(payload);
+            } catch {
+                // Health endpoint itself failing shouldn't break the dashboard.
+                // Surface a neutral "unknown" state.
+                const fallback = {
+                    ready: false,
+                    warmingUp: false,
+                    fallbackActive: false,
+                    message: "AI assistant status unavailable right now.",
+                };
+                return reply.send(fallback);
+            }
+        }
+    );
+
+    // -----------------------------------------------------------------------
     // POST /api/ai/chat — non-streaming (backward compat)
     // -----------------------------------------------------------------------
     fastify.post(
@@ -114,8 +170,16 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
                 let regulationTexts: string[] | undefined;
 
                 if (context?.caseId) {
+                    // Honour restrictCaseVisibility: only fold the case context in
+                    // if the caller can actually see this case.
+                    const access = await buildAccessContext(app.db, user);
                     const caseService = new CaseService(app.db);
-                    const caseData = await caseService.getCaseById(context.caseId, user.orgId);
+                    const caseData = await caseService.getCaseById(
+                        context.caseId,
+                        user.orgId,
+                        null,
+                        access
+                    );
                     caseText = `Case: ${caseData.title}\nType: ${caseData.caseType}\nDescription: ${caseData.description || "N/A"}\nStatus: ${caseData.status}`;
                 }
 
@@ -192,12 +256,26 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
             const aiClient = new AIClientService();
 
             try {
+                // Build the access context once and reuse for case-visibility
+                // checks below. Without this, a caller could pass a caseId
+                // they don't actually have visibility for under
+                // restrictCaseVisibility and have its data folded into the
+                // chat context.
+                const access = await buildAccessContext(app.db, user);
+
+                if (caseId) {
+                    // Throws ForbiddenError / NotFoundError if the caller
+                    // can't see this case.
+                    const caseService = new CaseService(app.db);
+                    await caseService.getCaseById(caseId, user.orgId, null, access);
+                }
+
                 // 1. Create or resume session
                 let sessionId = body.sessionId;
                 let history: { role: string; content: string }[] = [];
 
                 if (sessionId) {
-                    const existing = await chatService.getSession(sessionId, user.orgId);
+                    const existing = await chatService.getSession(sessionId, user.id, user.orgId);
                     if (existing) {
                         history = (existing.messages || []).map((m) => ({
                             role: m.role,
@@ -226,11 +304,13 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
                     content: message,
                 });
 
-                // 3. Assemble RAG context
+                // 3. Assemble RAG context. Pass the access context so the
+                // org-cases summary respects per-assignee visibility.
                 const ctx = await contextService.assembleContext({
                     message,
                     organizationId: user.orgId,
                     caseId,
+                    access,
                 });
 
                 logger.info({
@@ -440,7 +520,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
             }
 
             const chatService = new ChatService(app.db);
-            const session = await chatService.getSession(id, user.orgId);
+            const session = await chatService.getSession(id, user.id, user.orgId);
 
             if (!session) {
                 return reply.status(404).send({
@@ -482,7 +562,7 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
             }
 
             const chatService = new ChatService(app.db);
-            const deleted = await chatService.deleteSession(id, user.orgId);
+            const deleted = await chatService.deleteSession(id, user.id, user.orgId);
 
             if (!deleted) {
                 return reply.status(404).send({
@@ -527,8 +607,14 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
             }
 
             try {
+                const access = await buildAccessContext(app.db, user);
                 const caseService = new CaseService(app.db);
-                const caseData = await caseService.getCaseById(caseIdNum, user.orgId);
+                const caseData = await caseService.getCaseById(
+                    caseIdNum,
+                    user.orgId,
+                    null,
+                    access
+                );
 
                 const aiClient = new AIClientService();
                 const raw = await aiClient.analyzeCase({

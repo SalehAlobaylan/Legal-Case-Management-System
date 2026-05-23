@@ -12,13 +12,22 @@
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { cases, organizations, type Case, type NewCase } from "../db/schema";
+import { cases, type Case, type NewCase } from "../db/schema";
 import { ForbiddenError, NotFoundError } from "../utils/errors";
 import { PermissionService } from "./permission.service";
+
+export interface OrgPrivacy {
+  documents: boolean;
+  clients: boolean;
+  teamDirectory: boolean;
+  adminClosureRequired: boolean;
+  restrictCaseVisibility: boolean;
+}
 
 export interface CaseAccessContext {
   userId: string;
   effectivePermissions: Set<string>;
+  orgPrivacy: OrgPrivacy;
 }
 
 export class CaseService {
@@ -55,27 +64,18 @@ export class CaseService {
   /*
    * orgRestrictsVisibility
    *
+   * - Sync read from the access context's prefetched orgPrivacy.
    * - Returns true when the org has opted into per-assignee scoping AND the
    *   caller lacks the `cases.viewAll` bypass permission.
    */
-  private async orgRestrictsVisibility(
-    orgId: number,
-    access?: CaseAccessContext
-  ): Promise<boolean> {
+  private orgRestrictsVisibility(access?: CaseAccessContext): boolean {
     if (!access) return false;
     if (
       PermissionService.can(access.effectivePermissions, "delegated.cases.viewAll")
     ) {
       return false;
     }
-    const [org] = await this.db
-      .select({
-        restrictCaseVisibility: organizations.restrictCaseVisibility,
-      })
-      .from(organizations)
-      .where(eq(organizations.id, orgId))
-      .limit(1);
-    return Boolean(org?.restrictCaseVisibility);
+    return access.orgPrivacy.restrictCaseVisibility;
   }
 
   async getCaseById(
@@ -108,7 +108,7 @@ export class CaseService {
     }
 
     // Per-assignee visibility scoping
-    if (await this.orgRestrictsVisibility(orgId, access)) {
+    if (this.orgRestrictsVisibility(access)) {
       if (case_.assignedLawyerId !== access!.userId) {
         throw new ForbiddenError("Access denied to this case");
       }
@@ -143,7 +143,7 @@ export class CaseService {
       conditions.push(eq(cases.clientId, scopedClientId));
     }
 
-    if (await this.orgRestrictsVisibility(orgId, access)) {
+    if (this.orgRestrictsVisibility(access)) {
       conditions.push(eq(cases.assignedLawyerId, access!.userId));
     }
 
@@ -254,12 +254,24 @@ export class CaseService {
     access?: CaseAccessContext
   ) {
     if (ids.length === 0) return [];
-    // De-dupe and sanity-bound to avoid huge requests.
     const uniqueIds = Array.from(new Set(ids)).slice(0, 200);
 
-    // Per-id visibility/org check — keeps semantics identical to single assign.
-    for (const id of uniqueIds) {
-      await this.getCaseById(id, orgId, null, access);
+    const rows = await this.db
+      .select({
+        id: cases.id,
+        assignedLawyerId: cases.assignedLawyerId,
+      })
+      .from(cases)
+      .where(and(eq(cases.organizationId, orgId), inArray(cases.id, uniqueIds)));
+
+    if (rows.length !== uniqueIds.length) {
+      throw new NotFoundError("Case");
+    }
+
+    if (this.orgRestrictsVisibility(access)) {
+      if (rows.some((r) => r.assignedLawyerId !== access!.userId)) {
+        throw new ForbiddenError("One or more cases are not visible");
+      }
     }
 
     const updated = await this.db

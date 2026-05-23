@@ -268,6 +268,52 @@ export class RegulationAmendmentImpactService {
     return this.mapRowToState(row);
   }
 
+  /*
+   * runAmendmentImpactRefreshSync
+   *
+   * - Synchronous variant of enqueueAmendmentImpactRefresh. Same DB write
+   *   semantics, then processes the row inline so the HTTP caller gets the
+   *   final ready/failed state in the response.
+   * - Skips the polling worker entirely — used while the queue infrastructure
+   *   (BullMQ on Redis) is being introduced. Quality is identical.
+   */
+  async runAmendmentImpactRefreshSync(input: {
+    regulationId: number;
+    fromVersion: number;
+    toVersion: number;
+    triggeredByUserId: string;
+    force?: boolean;
+    languageCode?: string;
+  }): Promise<RegulationAmendmentImpactState> {
+    const queued = await this.enqueueAmendmentImpactRefresh(input);
+
+    if (queued.status === "ready" && !input.force) {
+      return queued;
+    }
+
+    const normalizedLanguage = (input.languageCode || "ar").toLowerCase();
+    const row = await this.db.query.regulationAmendmentImpacts.findFirst({
+      where: and(
+        eq(regulationAmendmentImpacts.regulationId, input.regulationId),
+        eq(regulationAmendmentImpacts.fromVersionNumber, input.fromVersion),
+        eq(regulationAmendmentImpacts.toVersionNumber, input.toVersion),
+        eq(regulationAmendmentImpacts.languageCode, normalizedLanguage)
+      ),
+    });
+
+    if (!row) {
+      throw new NotFoundError("Regulation amendment impact row");
+    }
+
+    await this.processSingleRow(row, new Date());
+
+    const finalRow = await this.db.query.regulationAmendmentImpacts.findFirst({
+      where: eq(regulationAmendmentImpacts.id, row.id),
+    });
+
+    return finalRow ? this.mapRowToState(finalRow) : queued;
+  }
+
   async enqueueAmendmentImpactRefresh(input: {
     regulationId: number;
     fromVersion: number;

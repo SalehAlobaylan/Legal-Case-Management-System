@@ -1,141 +1,22 @@
-import { db } from "../db/connection";
-import { env } from "../config/env";
+/*
+ * DEPRECATED — this entry point has been split into three:
+ *   - `combined.worker.ts`             (single-pod mode: scheduler + extraction)
+ *   - `scheduler.worker.ts`            (cron-style scheduled jobs only)
+ *   - `document-extraction.worker.ts`  (document extraction queue only)
+ *
+ * For backwards-compat with deploy configs that still invoke
+ * `npm run worker:reg-monitor`, this file delegates to the combined worker
+ * so existing single-pod deployments keep doing everything they used to.
+ * New deployments should use `npm run worker` (combined) or, when scaling
+ * out, `worker:scheduler` + `worker:extraction` on separate pods.
+ */
+
 import { logger } from "../utils/logger";
-import { RegulationMonitorService } from "../services/regulation-monitor.service";
-import { DocumentExtractionService } from "../services/document-extraction.service";
-import { RegulationSourceService } from "../services/regulation-source.service";
-import { RegulationInsightsService } from "../services/regulation-insights.service";
-import { RegulationAmendmentImpactService } from "../services/regulation-amendment-impact.service";
-import { OpenDataSourceService } from "../services/open-data-source.service";
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+logger.warn(
+  "worker:reg-monitor is deprecated — use `npm run worker` (combined) or split with worker:scheduler + worker:extraction."
+);
 
-let running = true;
-
-async function main() {
-  const monitorService = new RegulationMonitorService(db);
-  const sourceService = new RegulationSourceService(db);
-  const documentExtractionService = new DocumentExtractionService(db);
-  const regulationInsightsService = new RegulationInsightsService(db);
-  const amendmentImpactService = new RegulationAmendmentImpactService(db);
-  const openDataService = new OpenDataSourceService(db);
-  let lastSourceSyncAt = 0;
-  let lastOpenDataSyncAt = 0;
-  logger.info(
-    {
-      pollSeconds: env.REG_MONITOR_POLL_SECONDS,
-      concurrency: env.REG_MONITOR_MAX_CONCURRENCY,
-      failureRetryMinutes: env.REG_MONITOR_FAILURE_RETRY_MINUTES,
-      sourceSyncEnabled: env.REG_SOURCE_SYNC_ENABLED,
-      sourceSyncIntervalMinutes: env.REG_SOURCE_SYNC_INTERVAL_MINUTES,
-      sourceMaxPages: env.REG_SOURCE_MOJ_MAX_PAGES,
-      docExtractionEnabled: env.CASE_DOC_EXTRACTION_ENABLED,
-      docExtractionBatchSize: env.CASE_DOC_EXTRACTION_BATCH_SIZE,
-      docExtractionConcurrency: env.CASE_DOC_EXTRACTION_MAX_CONCURRENCY,
-      docInsightsEnabled: env.CASE_DOC_INSIGHTS_ENABLED,
-      docInsightsBatchSize: env.CASE_DOC_INSIGHTS_BATCH_SIZE,
-      docInsightsConcurrency: env.CASE_DOC_INSIGHTS_MAX_CONCURRENCY,
-      regInsightsEnabled: env.REG_INSIGHTS_ENABLED,
-      regInsightsBatchSize: env.REG_INSIGHTS_BATCH_SIZE,
-      regInsightsConcurrency: env.REG_INSIGHTS_MAX_CONCURRENCY,
-      regImpactEnabled: env.REG_IMPACT_ENABLED,
-      regImpactBatchSize: env.REG_IMPACT_BATCH_SIZE,
-      regImpactConcurrency: env.REG_IMPACT_MAX_CONCURRENCY,
-      openDataSyncEnabled: env.OPEN_DATA_SYNC_ENABLED,
-      openDataSyncIntervalMinutes: env.OPEN_DATA_SYNC_INTERVAL_MINUTES,
-      openDataPublishers: env.OPEN_DATA_TRUSTED_PUBLISHERS,
-    },
-    "Regulation monitor worker started"
-  );
-
-  while (running) {
-    const startedAt = Date.now();
-    try {
-      if (env.REG_SOURCE_SYNC_ENABLED) {
-        const intervalMs = env.REG_SOURCE_SYNC_INTERVAL_MINUTES * 60 * 1000;
-        const shouldSync = Date.now() - lastSourceSyncAt >= intervalMs;
-        if (shouldSync) {
-          const syncResult = await sourceService.syncMojSource({
-            maxPages: env.REG_SOURCE_MOJ_MAX_PAGES,
-            extractContent: true,
-            triggerSource: "moj_source_sync",
-          });
-          lastSourceSyncAt = Date.now();
-          logger.info(syncResult, "MOJ regulation source sync cycle completed");
-        }
-      }
-
-      if (env.OPEN_DATA_SYNC_ENABLED) {
-        const intervalMs = env.OPEN_DATA_SYNC_INTERVAL_MINUTES * 60 * 1000;
-        const shouldSync = Date.now() - lastOpenDataSyncAt >= intervalMs;
-        if (shouldSync) {
-          try {
-            const openDataResult = await openDataService.syncTrustedPublishers();
-            lastOpenDataSyncAt = Date.now();
-            logger.info(openDataResult, "Open Data Saudi sync cycle completed");
-          } catch (err) {
-            // Don't poison the rest of the cycle on open-data failures
-            lastOpenDataSyncAt = Date.now();
-            logger.error(
-              { err },
-              "Open Data Saudi sync cycle failed; will retry next interval"
-            );
-          }
-        }
-      }
-
-      await monitorService.runDueSubscriptions({
-        triggerSource: "worker",
-      });
-      const extractionResult =
-        await documentExtractionService.runPendingExtractions();
-      if (extractionResult.processed > 0) {
-        logger.info(
-          extractionResult,
-          "Case document extraction cycle completed"
-        );
-      }
-      const insightsResult = await documentExtractionService.runPendingInsights();
-      if (insightsResult.processed > 0) {
-        logger.info(insightsResult, "Case document insights cycle completed");
-      }
-      const regulationInsightsResult =
-        await regulationInsightsService.runPendingRegulationInsights();
-      if (regulationInsightsResult.processed > 0) {
-        logger.info(
-          regulationInsightsResult,
-          "Regulation AI insights cycle completed"
-        );
-      }
-
-      const amendmentImpactResult =
-        await amendmentImpactService.runPendingRegulationAmendmentImpacts();
-      if (amendmentImpactResult.processed > 0) {
-        logger.info(
-          amendmentImpactResult,
-          "Regulation amendment impact cycle completed"
-        );
-      }
-    } catch (error) {
-      logger.error({ err: error }, "Unhandled error during regulation monitor cycle");
-    }
-
-    const elapsed = Date.now() - startedAt;
-    const pollMs = Math.max(1, env.REG_MONITOR_POLL_SECONDS) * 1000;
-    const waitMs = Math.max(0, pollMs - elapsed);
-    await sleep(waitMs);
-  }
-
-  logger.info("Regulation monitor worker stopped");
-}
-
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => {
-    running = false;
-  });
-}
-
-main().catch((error) => {
-  logger.error({ err: error }, "Regulation monitor worker fatal error");
-  process.exit(1);
-});
+// Side-effect import; combined.worker.ts side-effect-imports both loop files.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import "./combined.worker";

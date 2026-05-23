@@ -489,8 +489,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
-      await assertCanSeeDocument({ db: app.db, user, document: _doc });
+      const doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       const insights = await extractionService.getDocumentInsightsByDocumentId(
@@ -534,17 +534,19 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
-      await assertCanSeeDocument({ db: app.db, user, document: _doc });
+      const doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: doc });
 
       const extractionService = new DocumentExtractionService(app.db);
-      await extractionService.enqueueDocumentInsights(docId, user.orgId);
-      const insights = await extractionService.getDocumentInsightsByDocumentId(
+      // Sync until the BullMQ/Redis queue lands. If extraction itself is still
+      // running (bucket C — genuinely long), this returns the in-progress state
+      // and the caller should poll the GET endpoint.
+      const insights = await extractionService.runDocumentInsightsRefreshSync(
         docId,
         user.orgId
       );
 
-      return reply.code(202).send({
+      return reply.send({
         documentId: docId,
         ...insights,
       });
@@ -590,8 +592,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
-      await assertCanSeeDocument({ db: app.db, user, document: _doc });
+      const doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       await extractionService.enqueueSingleDocument(docId, user.orgId, { force: true });
@@ -651,8 +653,8 @@ const documentsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const documentService = new DocumentService(app.db);
-      const _doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
-      await assertCanSeeDocument({ db: app.db, user, document: _doc });
+      const doc = await documentService.getDocumentById(docId, user.orgId, scopedClientId);
+      await assertCanSeeDocument({ db: app.db, user, document: doc });
 
       const extractionService = new DocumentExtractionService(app.db);
       const status = await extractionService.getExtractionStatusByDocumentId(

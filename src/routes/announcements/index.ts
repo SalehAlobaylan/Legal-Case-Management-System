@@ -22,6 +22,7 @@ import {
   orgAnnouncements,
 } from "../../db/schema/org-announcements";
 import { AuditLogService } from "../../services/audit-log.service";
+import { requireAdmin } from "../../lib/require-admin";
 
 type RequestWithUser = FastifyRequest & {
   user: { id: string; email: string; role: string; orgId: number };
@@ -116,9 +117,7 @@ const announcementsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
       const rows = await db
         .select()
         .from(orgAnnouncements)
@@ -144,31 +143,32 @@ const announcementsRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user, body } = request as RequestWithUser & { body: unknown };
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
       const data = createAnnouncementSchema.parse(body);
 
-      const [created] = await db
-        .insert(orgAnnouncements)
-        .values({
+      const auditService = new AuditLogService(db, request.log);
+      const created = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(orgAnnouncements)
+          .values({
+            organizationId: user.orgId,
+            createdByUserId: user.id,
+            title: data.title,
+            body: data.body,
+            severity: data.severity ?? "info",
+            isActive: true,
+            expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+          })
+          .returning();
+        await auditService.logTx(tx, {
           organizationId: user.orgId,
-          createdByUserId: user.id,
-          title: data.title,
-          body: data.body,
-          severity: data.severity ?? "info",
-          isActive: true,
-          expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
-        })
-        .returning();
-
-      await new AuditLogService(db).log({
-        organizationId: user.orgId,
-        actorUserId: user.id,
-        action: "announcement.create",
-        targetType: "announcement",
-        targetId: created.id,
-        payload: { title: created.title, severity: created.severity },
+          actorUserId: user.id,
+          action: "announcement.create",
+          targetType: "announcement",
+          targetId: row.id,
+          payload: { title: row.title, severity: row.severity },
+        });
+        return row;
       });
 
       return reply.code(201).send({ announcement: created });
@@ -193,9 +193,7 @@ const announcementsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user, body } = request as RequestWithUser & { body: unknown };
       const { id } = request.params as { id: string };
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
       const numericId = Number(id);
       if (!Number.isInteger(numericId) || numericId <= 0) {
         return reply.status(400).send({ message: "Invalid id" });
@@ -222,25 +220,27 @@ const announcementsRoutes: FastifyPluginAsync = async (fastify) => {
       if (data.expiresAt !== undefined)
         patch.expiresAt = data.expiresAt === null ? null : new Date(data.expiresAt);
 
-      const [updated] = await db
-        .update(orgAnnouncements)
-        .set(patch)
-        .where(eq(orgAnnouncements.id, numericId))
-        .returning();
-
+      const auditService = new AuditLogService(db, request.log);
       // Distinguish "retire" (isActive flipped to false) from a generic update.
-      const action =
-        data.isActive === false ? "announcement.retire" : null;
-      if (action) {
-        await new AuditLogService(db).log({
-          organizationId: user.orgId,
-          actorUserId: user.id,
-          action,
-          targetType: "announcement",
-          targetId: updated.id,
-          payload: { title: updated.title },
-        });
-      }
+      const action = data.isActive === false ? "announcement.retire" : null;
+      const updated = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(orgAnnouncements)
+          .set(patch)
+          .where(eq(orgAnnouncements.id, numericId))
+          .returning();
+        if (action) {
+          await auditService.logTx(tx, {
+            organizationId: user.orgId,
+            actorUserId: user.id,
+            action,
+            targetType: "announcement",
+            targetId: row.id,
+            payload: { title: row.title },
+          });
+        }
+        return row;
+      });
 
       return reply.send({ announcement: updated });
     }
@@ -264,9 +264,7 @@ const announcementsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { user } = request as RequestWithUser;
       const { id } = request.params as { id: string };
-      if (user.role !== "admin") {
-        return reply.status(403).send({ message: "Admin access required" });
-      }
+      if (!requireAdmin(request, reply)) return;
       const numericId = Number(id);
       if (!Number.isInteger(numericId) || numericId <= 0) {
         return reply.status(400).send({ message: "Invalid id" });
@@ -282,17 +280,19 @@ const announcementsRoutes: FastifyPluginAsync = async (fastify) => {
       if (existing.organizationId !== user.orgId) {
         return reply.status(403).send({ message: "Cross-organization access denied" });
       }
-      await db
-        .delete(orgAnnouncements)
-        .where(eq(orgAnnouncements.id, numericId));
-
-      await new AuditLogService(db).log({
-        organizationId: user.orgId,
-        actorUserId: user.id,
-        action: "announcement.delete",
-        targetType: "announcement",
-        targetId: numericId,
-        payload: {},
+      const auditService = new AuditLogService(db, request.log);
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(orgAnnouncements)
+          .where(eq(orgAnnouncements.id, numericId));
+        await auditService.logTx(tx, {
+          organizationId: user.orgId,
+          actorUserId: user.id,
+          action: "announcement.delete",
+          targetType: "announcement",
+          targetId: numericId,
+          payload: {},
+        });
       });
 
       return reply.code(204).send();

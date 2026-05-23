@@ -31,6 +31,17 @@ export const caseStatusEnum = [
   "archived",
 ] as const;
 
+export type CaseStatus = (typeof caseStatusEnum)[number];
+
+// "Terminal" statuses — the case has been resolved or shelved and most
+// dashboards/queries exclude these from active workload.
+// Mutable array (not `as const`) so Drizzle's `inArray` overload accepts it.
+export const CLOSED_STATUSES: CaseStatus[] = ["closed", "archived"];
+
+export function isClosedStatus(s: string | null | undefined): boolean {
+  return s === "closed" || s === "archived";
+}
+
 export const cases = pgTable(
   "cases",
   {
@@ -92,5 +103,4 @@ export const casesRelations = relations(cases, ({ one }) => ({
 export type Case = typeof cases.$inferSelect;
 export type NewCase = typeof cases.$inferInsert;
 export type CaseType = (typeof caseTypeEnum)[number];
-export type CaseStatus = (typeof caseStatusEnum)[number];
 

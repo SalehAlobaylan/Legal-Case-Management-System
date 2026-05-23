@@ -24,4 +24,13 @@ COPY --from=builder /app/dist ./dist
 COPY drizzle.config.ts ./
 COPY src/db/migrations ./src/db/migrations
 
-CMD ["node", "dist/workers/regulation-monitor.worker.js"]
+# Combined worker — runs BOTH the scheduler loop (bucket B: MOJ sync,
+# open-data sync, subscription runs) and the document-extraction loop
+# (bucket C) in a single Node process. This is the default single-pod mode.
+#
+# To split into two pods when extraction volume grows:
+#   - Change this CMD to "dist/workers/scheduler.worker.js"
+#   - Add a second pod using Dockerfile.extraction-worker
+# The split is supported today; runPendingExtractions uses SELECT ... FOR
+# UPDATE SKIP LOCKED so multiple extraction workers won't race.
+CMD ["node", "dist/workers/combined.worker.js"]

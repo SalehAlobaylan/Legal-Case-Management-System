@@ -223,6 +223,58 @@ export class RegulationInsightsService {
     return this.mapRowToState(row);
   }
 
+  /*
+   * runLatestInsightsRefreshSync
+   *
+   * - Synchronous variant of enqueueLatestInsightsRefresh: enqueues the row
+   *   (same DB write semantics) then processes it inline so the HTTP caller
+   *   gets the final ready/failed state in the response.
+   * - Skips the polling worker and its global advisory lock — used while the
+   *   queue infrastructure (BullMQ on Redis) is being introduced.
+   * - Quality is identical to the async path; this is the same processSingleRow
+   *   that the worker would have called.
+   */
+  async runLatestInsightsRefreshSync(input: {
+    regulationId: number;
+    triggeredByUserId: string;
+    force?: boolean;
+    languageCode?: string;
+  }): Promise<RegulationInsightsState> {
+    const queued = await this.enqueueLatestInsightsRefresh(input);
+
+    // If enqueue short-circuited because a "ready" row with matching hash
+    // already exists, return it without redoing the AI call.
+    if (queued.status === "ready" && !input.force) {
+      return queued;
+    }
+
+    // Re-fetch by the unique key (regulationVersionId, languageCode). The
+    // version id is carried on the just-enqueued state, so we don't need to
+    // round-trip through getRegulationWithLatestVersion again.
+    if (queued.regulationVersionId == null) {
+      throw new NotFoundError("Regulation insights row");
+    }
+    const normalizedLanguage = (input.languageCode || "ar").toLowerCase();
+    const row = await this.db.query.regulationInsights.findFirst({
+      where: and(
+        eq(regulationInsights.regulationVersionId, queued.regulationVersionId),
+        eq(regulationInsights.languageCode, normalizedLanguage)
+      ),
+    });
+
+    if (!row) {
+      throw new NotFoundError("Regulation insights row");
+    }
+
+    await this.processSingleRow(row, new Date());
+
+    const finalRow = await this.db.query.regulationInsights.findFirst({
+      where: eq(regulationInsights.id, row.id),
+    });
+
+    return finalRow ? this.mapRowToState(finalRow) : queued;
+  }
+
   async enqueueLatestInsightsRefresh(input: {
     regulationId: number;
     triggeredByUserId: string;

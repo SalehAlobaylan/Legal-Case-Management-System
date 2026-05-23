@@ -17,6 +17,8 @@ import {
 import {
   DocumentRagService,
 } from "./document-rag.service";
+import { PermissionService } from "./permission.service";
+import type { CaseAccessContext } from "./case.service";
 import { logger } from "../utils/logger";
 
 /** Regulation chunk formatted for the AI microservice chat endpoint. */
@@ -99,6 +101,14 @@ export class ChatContextService {
     maxDocuments?: number;
     /** Maximum number of org cases to include as context (default 50). */
     maxOrgCases?: number;
+    /**
+     * Access context for the calling user. When the org has
+     * `restrictCaseVisibility` ON and the caller lacks the
+     * `delegated.cases.viewAll` bypass, the `orgCases` summary is filtered to
+     * cases assigned to that user. Without this, the full case list leaks
+     * across teammates regardless of the privacy setting.
+     */
+    access?: CaseAccessContext;
   }): Promise<ChatContextResult> {
     const regulationTopK = input.regulationTopK ?? 10;
     const regulationPerRegLimit = input.regulationPerRegLimit ?? 3;
@@ -214,9 +224,23 @@ export class ChatContextService {
     // general questions like "how many commercial cases do I have?"
     // This is org-scoped — only cases belonging to this organization are returned.
     let orgCases: OrgCaseSummary[] = [];
+    // Respect restrictCaseVisibility: when the org has it ON and the caller
+    // lacks the viewAll bypass, only return cases assigned to that user.
+    const restrictToAssignee =
+      !!input.access &&
+      input.access.orgPrivacy.restrictCaseVisibility &&
+      !PermissionService.can(
+        input.access.effectivePermissions,
+        "delegated.cases.viewAll"
+      );
     try {
       const orgCaseRows = await this.db.query.cases.findMany({
-        where: eq(cases.organizationId, input.organizationId),
+        where: restrictToAssignee
+          ? and(
+              eq(cases.organizationId, input.organizationId),
+              eq(cases.assignedLawyerId, input.access!.userId)
+            )
+          : eq(cases.organizationId, input.organizationId),
         columns: {
           id: true,
           caseNumber: true,

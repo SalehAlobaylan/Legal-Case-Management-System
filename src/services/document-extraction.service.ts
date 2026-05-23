@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { getStorageService } from "./storage.service";
-import { and, eq, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, inArray, lte } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import { env } from "../config/env";
 import { AIClientService, type SimilarityCaseFragment } from "./ai-client.service";
@@ -654,6 +654,43 @@ export class DocumentExtractionService {
     };
   }
 
+  /*
+   * runDocumentInsightsRefreshSync
+   *
+   * - Synchronous variant: enqueue (mark pending) then immediately process so
+   *   the HTTP caller receives the final ready/failed state.
+   * - If extraction itself isn't ready yet, returns the current state without
+   *   processing — extraction is bucket C (genuinely long-running) and stays
+   *   on the worker queue. The caller should poll until extraction is ready.
+   * - Skips the polling worker entirely. Same quality as the async path.
+   */
+  async runDocumentInsightsRefreshSync(
+    documentId: number,
+    orgId: number
+  ): Promise<DocumentInsightState> {
+    await this.enqueueDocumentInsights(documentId, orgId);
+
+    const extractionState = await this.getExtractionStatusByDocumentId(
+      documentId,
+      orgId
+    );
+    if (extractionState.status !== "ready") {
+      // Extraction still in progress (bucket C); user polls until it completes.
+      return this.getDocumentInsightsByDocumentId(documentId, orgId);
+    }
+
+    const row = await this.db.query.documentExtractions.findFirst({
+      where: eq(documentExtractions.documentId, documentId),
+    });
+    if (!row) {
+      throw new NotFoundError("Document extraction row");
+    }
+
+    await this.processSingleInsights(row, new Date());
+
+    return this.getDocumentInsightsByDocumentId(documentId, orgId);
+  }
+
   async enqueueDocumentInsights(documentId: number, orgId: number): Promise<void> {
     const document = await this.db.query.documents.findFirst({
       where: eq(documents.id, documentId),
@@ -1075,13 +1112,45 @@ export class DocumentExtractionService {
     }
 
     const now = new Date();
-    const rows = await this.db.query.documentExtractions.findMany({
-      where: and(
-        inArray(documentExtractions.status, ["pending", "failed", "processing"]),
-        lte(documentExtractions.nextRetryAt, now)
-      ),
-      orderBy: (table, { asc }) => [asc(table.nextRetryAt)],
-      limit: env.CASE_DOC_EXTRACTION_BATCH_SIZE,
+
+    // Atomically claim a batch of rows using SELECT ... FOR UPDATE SKIP LOCKED
+    // so multiple extraction workers can run side-by-side without racing on
+    // the same row. The status flip to "processing" lands inside the same tx,
+    // so once we commit, other workers see them as already-claimed.
+    const rows = await this.db.transaction(async (tx) => {
+      const candidates = await tx
+        .select({ id: documentExtractions.id })
+        .from(documentExtractions)
+        .where(
+          and(
+            inArray(documentExtractions.status, [
+              "pending",
+              "failed",
+              "processing",
+            ]),
+            lte(documentExtractions.nextRetryAt, now)
+          )
+        )
+        .orderBy(asc(documentExtractions.nextRetryAt))
+        .limit(env.CASE_DOC_EXTRACTION_BATCH_SIZE)
+        .for("update", { skipLocked: true });
+
+      if (candidates.length === 0) return [];
+
+      const claimedIds = candidates.map((c) => c.id);
+      // Bump nextRetryAt so that if this worker crashes mid-processing, the
+      // row isn't immediately re-picked by the next poll cycle. After 5 min
+      // the row becomes eligible again as a recovery mechanism.
+      const retryGuard = new Date(now.getTime() + 5 * 60 * 1000);
+      await tx
+        .update(documentExtractions)
+        .set({ status: "processing", updatedAt: now, nextRetryAt: retryGuard })
+        .where(inArray(documentExtractions.id, claimedIds));
+
+      return tx.query.documentExtractions.findMany({
+        where: inArray(documentExtractions.id, claimedIds),
+        orderBy: asc(documentExtractions.nextRetryAt),
+      });
     });
 
     if (rows.length === 0) {

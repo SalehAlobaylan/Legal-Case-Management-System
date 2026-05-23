@@ -9,6 +9,7 @@ import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../../db/connection";
 import { intakeForms, intakeSubmissions } from "../../db/schema";
+import { requireAdmin } from "../../lib/require-admin";
 
 type RequestWithUser = FastifyRequest & {
   user: {
@@ -98,15 +99,6 @@ const updateIntakeFormSchema = createIntakeFormSchema.partial();
 const intakeRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
   app.addHook("onRequest", app.authenticate);
-
-  const requireAdmin = (request: FastifyRequest, reply: FastifyReply): boolean => {
-    const { user } = request as RequestWithUser;
-    if (user.role !== "admin") {
-      reply.status(403).send({ message: "Admin access required" });
-      return false;
-    }
-    return true;
-  };
 
   // List forms (excluding soft-deleted)
   fastify.get(

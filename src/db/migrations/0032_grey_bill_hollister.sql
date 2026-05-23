@@ -1,0 +1,2 @@
+CREATE INDEX "user_activities_user_created_at_idx" ON "user_activities" USING btree ("user_id","created_at" desc);--> statement-breakpoint
+CREATE INDEX "admin_audit_log_org_id_desc_idx" ON "admin_audit_log" USING btree ("organization_id","id" desc);

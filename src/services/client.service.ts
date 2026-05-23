@@ -14,7 +14,6 @@ import {
   cases,
   clientActivities,
   clientDocuments,
-  organizations,
   type NewClientActivity,
   type NewClientDocument,
 } from "../db/schema";
@@ -45,25 +44,14 @@ export class ClientService {
    * - Returns true when `settings.privacy.clients` is ON AND the caller lacks
    *   the `delegated.clients.viewAll` bypass (admin's `*` also bypasses).
    */
-  private async orgRestrictsClientSharing(
-    orgId: number,
-    access?: CaseAccessContext
-  ): Promise<boolean> {
+  private orgRestrictsClientSharing(access?: CaseAccessContext): boolean {
     if (!access) return false;
     if (
       PermissionService.can(access.effectivePermissions, "delegated.clients.viewAll")
     ) {
       return false;
     }
-    const [org] = await this.db
-      .select({ settings: organizations.settings })
-      .from(organizations)
-      .where(eq(organizations.id, orgId))
-      .limit(1);
-    return Boolean(
-      (org?.settings as { privacy?: { clients?: boolean } } | null | undefined)
-        ?.privacy?.clients
-    );
+    return access.orgPrivacy.clients;
   }
 
   /**
@@ -87,7 +75,7 @@ export class ClientService {
       throw new ForbiddenError("Access denied to this client");
     }
 
-    if (await this.orgRestrictsClientSharing(orgId, access)) {
+    if (this.orgRestrictsClientSharing(access)) {
       const [link] = await this.db
         .select({ id: cases.id })
         .from(cases)
@@ -141,7 +129,7 @@ export class ClientService {
       conditions.push(sql`${clients.tags} @> ${JSON.stringify([filters.tag])}`);
     }
 
-    if (await this.orgRestrictsClientSharing(orgId, access)) {
+    if (this.orgRestrictsClientSharing(access)) {
       conditions.push(
         inArray(
           clients.id,

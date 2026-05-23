@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import type { Database } from "../db/connection";
-import { caseRegulationLinks, type NewCaseRegulationLink } from "../db/schema";
+import { caseRegulationLinks, cases, type NewCaseRegulationLink } from "../db/schema";
+import { ForbiddenError, NotFoundError } from "../utils/errors";
 
 /**
  * LinkService
@@ -67,12 +68,43 @@ export class LinkService {
     });
   }
 
+  /*
+   * assertLinkInOrg
+   *
+   * - Loads a link joined to its parent case and asserts the case belongs to
+   *   `orgId`. Returns `{ linkId, caseId }` so callers can chain visibility
+   *   checks via CaseService.
+   * - Without this, verify/delete by linkId alone would cross tenant
+   *   boundaries — a user in org A could mutate any link in the DB.
+   */
+  private async assertLinkInOrg(linkId: number, orgId: number) {
+    const [row] = await this.db
+      .select({
+        id: caseRegulationLinks.id,
+        caseId: caseRegulationLinks.caseId,
+        organizationId: cases.organizationId,
+      })
+      .from(caseRegulationLinks)
+      .innerJoin(cases, eq(cases.id, caseRegulationLinks.caseId))
+      .where(eq(caseRegulationLinks.id, linkId))
+      .limit(1);
+    if (!row) {
+      throw new NotFoundError("Link");
+    }
+    if (row.organizationId !== orgId) {
+      throw new ForbiddenError("Cross-organization access denied");
+    }
+    return { id: row.id, caseId: row.caseId };
+  }
+
   /**
    * verifyLink
    *
    * - Marks a link as verified by a specific user and timestamps the action.
+   * - Org-scoped: the link's parent case must belong to `orgId`.
    */
-  async verifyLink(linkId: number, userId: string) {
+  async verifyLink(linkId: number, userId: string, orgId: number) {
+    await this.assertLinkInOrg(linkId, orgId);
     const [updated] = await this.db
       .update(caseRegulationLinks)
       .set({
@@ -90,10 +122,24 @@ export class LinkService {
    * deleteLink
    *
    * - Permanently removes a link by its primary key.
+   * - Org-scoped: the link's parent case must belong to `orgId`.
    */
-  async deleteLink(linkId: number) {
+  async deleteLink(linkId: number, orgId: number) {
+    await this.assertLinkInOrg(linkId, orgId);
     await this.db
       .delete(caseRegulationLinks)
       .where(eq(caseRegulationLinks.id, linkId));
+  }
+
+  /*
+   * findLinkCaseId
+   *
+   * - Resolves a linkId to its parent caseId within an organization. Used by
+   *   route handlers that want to gate verify/delete behind a CaseService
+   *   visibility check before committing the mutation.
+   */
+  async findLinkCaseId(linkId: number, orgId: number): Promise<number> {
+    const { caseId } = await this.assertLinkInOrg(linkId, orgId);
+    return caseId;
   }
 }

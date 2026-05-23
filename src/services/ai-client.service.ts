@@ -450,6 +450,37 @@ export class AIClientService {
   }
 
   /**
+   * getEmbeddingsHealth
+   *
+   * - Reads `/health/embeddings` from the AI microservice. Used by the
+   *   backend `/api/ai/health` route to drive a "warming up" / "on backup"
+   *   banner in the frontend.
+   * - Uses a short timeout (3s) and a single retry — health checks should
+   *   never block the UI for long.
+   */
+  async getEmbeddingsHealth(): Promise<{
+    warming_up?: boolean;
+    fallback_active?: boolean;
+    local_model_state?: string;
+    last_provider?: string | null;
+    configured_provider?: string;
+  }> {
+    const response = await this.fetchWithRetry(
+      `${this.baseUrl}/health/embeddings`,
+      { method: "GET", headers: { Accept: "application/json" } },
+      "health/embeddings",
+      { timeoutMs: 3000, maxRetries: 1 }
+    );
+    return (await response.json()) as Record<string, unknown> as {
+      warming_up?: boolean;
+      fallback_active?: boolean;
+      local_model_state?: string;
+      last_provider?: string | null;
+      configured_provider?: string;
+    };
+  }
+
+  /**
    * generateEmbeddings
    *
    * - Generates embedding vectors for a batch of texts.

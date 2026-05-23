@@ -16,6 +16,10 @@ import {
   userActivities,
   userAchievements,
 } from "../db/schema";
+import type {
+  ActivityType,
+  ActivityAction,
+} from "../db/schema/user-activities";
 import * as path from "path";
 import { getStorageService } from "./storage.service";
 
@@ -286,8 +290,8 @@ export class ProfileService {
    */
   async recordActivity(
     userId: string,
-    type: "case" | "regulation" | "document" | "client",
-    action: "created" | "updated" | "closed" | "reviewed" | "uploaded",
+    type: ActivityType,
+    action: ActivityAction,
     title: string,
     referenceId?: number
   ): Promise<void> {
