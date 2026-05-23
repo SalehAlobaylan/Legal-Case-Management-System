@@ -9,7 +9,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "../db/connection";
 import { clients, users, clientMessages } from "../db/schema";
-import { NotFoundError, ForbiddenError } from "../utils/errors";
+import { NotFoundError, ForbiddenError, ValidationError, ConflictError } from "../utils/errors";
 import { NotificationDeliveryService } from "./notification-delivery.service";
 import { CommunicationService } from "./communication.service";
 import { logger } from "../utils/logger";
@@ -49,7 +49,10 @@ export class ClientMessagingService {
 
     // Validate message length
     if (message.length < 1 || message.length > 2000) {
-      throw new Error("Message must be between 1 and 2000 characters");
+      throw new ValidationError(
+        "Message must be between 1 and 2000 characters",
+        { field: "message", min: 1, max: 2000 }
+      );
     }
 
     // Verify client exists and belongs to org
@@ -88,7 +91,7 @@ export class ClientMessagingService {
     try {
       if (channel === "email") {
         if (!client.email) {
-          throw new Error("Client email is missing");
+          throw new ValidationError("Client email is missing", { field: "email" });
         }
         await this.communication.sendEmail(
           client.email,
@@ -97,12 +100,12 @@ export class ClientMessagingService {
         );
       } else if (channel === "sms") {
         if (!client.phone) {
-          throw new Error("Client phone is missing");
+          throw new ValidationError("Client phone is missing", { field: "phone" });
         }
         await this.communication.sendSms(client.phone, message);
       } else if (channel === "whatsapp") {
         if (!client.phone) {
-          throw new Error("Client phone is missing");
+          throw new ValidationError("Client phone is missing", { field: "phone" });
         }
         await this.communication.sendWhatsApp(client.phone, message);
       } else {
@@ -239,7 +242,10 @@ export class ClientMessagingService {
     }
 
     if (existing.status !== "failed") {
-      throw new Error("Only failed messages can be retried");
+      throw new ConflictError(
+        "Only failed messages can be retried",
+        "CONFLICT_INVALID_STATE"
+      );
     }
 
     const [updated] = await this.db

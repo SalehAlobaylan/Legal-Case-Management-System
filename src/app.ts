@@ -8,6 +8,7 @@ import multipart from "@fastify/multipart";
 import staticPlugin from "@fastify/static";
 import path from "path";
 import { env } from "./config/env";
+import { RateLimitError } from "./errors/AppError";
 
 // Plugins
 import databasePlugin from "./plugins/database";
@@ -64,6 +65,10 @@ export function buildApp(opts = {}) {
   app.register(rateLimit, {
     max: env.RATE_LIMIT_MAX,
     timeWindow: env.RATE_LIMIT_WINDOW,
+    errorResponseBuilder: (req, context) =>
+      new RateLimitError(
+        `Rate limit exceeded, retry in ${context.after}`
+      ).toResponse(String(req.id)),
   });
 
   // JWT

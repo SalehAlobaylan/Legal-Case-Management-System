@@ -23,6 +23,7 @@ import type { ChatCitationRow } from "../../db/schema/chat-sessions";
 import type { Database } from "../../db/connection";
 import { regulations } from "../../db/schema";
 import { inArray } from "drizzle-orm";
+import { ExternalServiceError } from "../../utils/errors";
 import { logger } from "../../utils/logger";
 
 const MAX_MESSAGE_LENGTH = 10_000;
@@ -337,7 +338,9 @@ const aiRoutes: FastifyPluginAsync = async (fastify) => {
                 const aiResponse = await aiClient.chatStream(streamPayload);
 
                 if (!aiResponse.body) {
-                    throw new Error("AI service returned no stream body");
+                    throw new ExternalServiceError("ai", "EXTERNAL_AI_BAD_RESPONSE", {
+                        reason: "missing stream body",
+                    });
                 }
 
                 // 6. Set SSE headers and pipe the stream

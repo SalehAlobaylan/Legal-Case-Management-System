@@ -9,6 +9,7 @@
 
 import { FastifyRequest, FastifyReply } from "fastify";
 import { AuthService } from "../../services/auth.service";
+import { NotFoundError } from "../../utils/errors";
 import {
   RegisterInput,
   LoginInput,
@@ -112,7 +113,7 @@ export async function getMeHandler(
   const user = await authService.getUserById(request.user!.id);
 
   if (!user) {
-    return reply.code(404).send({ error: "User not found" });
+    throw new NotFoundError("User");
   }
 
   return reply.send({ user });
@@ -135,7 +136,7 @@ export async function updateMeHandler(
   const user = await authService.updateProfile(request.user!.id, data);
 
   if (!user) {
-    return reply.code(404).send({ error: "User not found" });
+    throw new NotFoundError("User");
   }
 
   return reply.send({ user });

@@ -20,6 +20,7 @@ import {
   type NewRegulationVersion,
 } from "../db/schema";
 import { NotFoundError, ValidationError } from "../utils/errors";
+import { isLoadingPlaceholder } from "../utils/content-validation";
 
 export interface RegulationDiffBlock {
   type: "equal" | "insert" | "delete";
@@ -73,7 +74,9 @@ export class RegulationService {
       throw new NotFoundError("Regulation");
     }
 
-    const latestVersion = await this.db.query.regulationVersions.findFirst({
+    // Fetch a few recent versions so we can skip any whose content is a
+    // loading placeholder stored before the scraper's content guard existed.
+    const recentVersions = await this.db.query.regulationVersions.findMany({
       where: eq(regulationVersions.regulationId, id),
       columns: {
         id: true,
@@ -84,7 +87,13 @@ export class RegulationService {
         fetchedAt: true,
       },
       orderBy: [desc(regulationVersions.versionNumber)],
+      limit: 10,
     });
+
+    const latestVersion =
+      recentVersions.find((v) => v.content && !isLoadingPlaceholder(v.content)) ||
+      recentVersions[0] ||
+      null;
 
     return {
       ...regulation,
@@ -234,10 +243,18 @@ export class RegulationService {
    * - Orders versions by `versionNumber` descending so the latest version appears first.
    */
   async getVersionsByRegulationId(regulationId: number) {
-    return this.db.query.regulationVersions.findMany({
+    const versions = await this.db.query.regulationVersions.findMany({
       where: eq(regulationVersions.regulationId, regulationId),
       orderBy: [desc(regulationVersions.versionNumber)],
     });
+
+    // Tag versions whose content is a loading placeholder so the UI can
+    // skip or badge them. This handles legacy data stored before the
+    // scraper's content-validation guard was added.
+    return versions.map((v) => ({
+      ...v,
+      contentInvalid: !v.content || isLoadingPlaceholder(v.content),
+    }));
   }
 
   private buildLineDiffBlocks(leftText: string, rightText: string): RegulationDiffBlock[] {

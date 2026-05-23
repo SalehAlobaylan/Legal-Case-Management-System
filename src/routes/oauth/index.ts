@@ -15,6 +15,7 @@ import fp from "fastify-plugin";
 import { OAuthService } from "../../services/oauth.service";
 import { createTokenPayload } from "../../utils/jwt";
 import { env } from "../../config/env";
+import { ExternalServiceError } from "../../utils/errors";
 
 interface GoogleTokensResponse {
   access_token: string;
@@ -86,13 +87,13 @@ const oauthRoutes: FastifyPluginAsync = async (fastify) => {
 
       if (error) {
         return reply.redirect(
-          `${env.FRONTEND_URL}/login?error=oauth_failed`
+          `${env.FRONTEND_URL}/login?error=OAUTH_CALLBACK_FAILED`
         );
       }
 
       if (!code) {
         return reply.redirect(
-          `${env.FRONTEND_URL}/login?error=no_code`
+          `${env.FRONTEND_URL}/login?error=OAUTH_NO_CODE`
         );
       }
 
@@ -110,7 +111,9 @@ const oauthRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       if (!tokenResponse.ok) {
-        throw new Error("Failed to exchange code for token");
+        throw new ExternalServiceError("oauth", "OAUTH_TOKEN_EXCHANGE_FAILED", {
+          status: tokenResponse.status,
+        });
       }
 
       const tokens = await tokenResponse.json() as GoogleTokensResponse;
@@ -124,7 +127,9 @@ const oauthRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       if (!profileResponse.ok) {
-        throw new Error("Failed to fetch user profile");
+        throw new ExternalServiceError("oauth", "OAUTH_PROFILE_FETCH_FAILED", {
+          status: profileResponse.status,
+        });
       }
 
       const profile = await profileResponse.json() as GoogleProfileResponse;
@@ -156,9 +161,11 @@ const oauthRoutes: FastifyPluginAsync = async (fastify) => {
       );
     } catch (error) {
       fastify.log.error(error);
-      return reply.redirect(
-        `${env.FRONTEND_URL}/login?error=oauth_failed`
-      );
+      const code =
+        error instanceof ExternalServiceError && typeof error.code === "string"
+          ? error.code
+          : "OAUTH_CALLBACK_FAILED";
+      return reply.redirect(`${env.FRONTEND_URL}/login?error=${code}`);
     }
   });
 };

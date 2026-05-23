@@ -17,6 +17,7 @@ import { eq } from "drizzle-orm";
 import { OrganizationService } from "../../services/organization.service";
 import { users } from "../../db/schema";
 import { createTokenPayload } from "../../utils/jwt";
+import { NotFoundError } from "../../utils/errors";
 
 const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
   const organizationResponseSchema = {
@@ -102,7 +103,7 @@ const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
       const organization = await organizationService.getById(id);
 
       if (!organization) {
-        return reply.code(404).send({ error: "Organization not found" });
+        throw new NotFoundError("Organization");
       }
 
       return reply.send({ organization });
@@ -173,36 +174,31 @@ const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
         contactInfo?: string;
       };
 
-      try {
-        const organization = await organizationService.create(data);
-        const [updatedUser] = await request.server.db
-          .update(users)
-          .set({
-            organizationId: organization.id,
-            role: "admin",
-            updatedAt: new Date(),
-          })
-          .where(eq(users.id, authUser.id))
-          .returning();
+      // organizationService.create() throws ConflictError on duplicates;
+      // the centralized error handler maps it to the canonical envelope.
+      const organization = await organizationService.create(data);
+      const [updatedUser] = await request.server.db
+        .update(users)
+        .set({
+          organizationId: organization.id,
+          role: "admin",
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, authUser.id))
+        .returning();
 
-        const { passwordHash, googleId, isOAuthUser, ...safeUser } = updatedUser;
+      const { passwordHash, googleId, isOAuthUser, ...safeUser } = updatedUser;
 
-        const token = request.server.jwt.sign(
-          createTokenPayload({
-            id: safeUser.id,
-            email: safeUser.email,
-            role: safeUser.role,
-            organizationId: safeUser.organizationId,
-          })
-        );
+      const token = request.server.jwt.sign(
+        createTokenPayload({
+          id: safeUser.id,
+          email: safeUser.email,
+          role: safeUser.role,
+          organizationId: safeUser.organizationId,
+        })
+      );
 
-        return reply.code(201).send({ organization, user: safeUser, token });
-      } catch (error) {
-        if (error instanceof Error && error.message === "Organization already exists") {
-          return reply.code(409).send({ error: error.message });
-        }
-        throw error;
-      }
+      return reply.code(201).send({ organization, user: safeUser, token });
     }
   );
 
@@ -262,7 +258,7 @@ const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
       const organization = await organizationService.update(id, data);
 
       if (!organization) {
-        return reply.code(404).send({ error: "Organization not found" });
+        throw new NotFoundError("Organization");
       }
 
       return reply.send({ organization });
@@ -308,7 +304,7 @@ const organizationsRoutes: FastifyPluginAsync = async (fastify) => {
       const organization = await organizationService.delete(id);
 
       if (!organization) {
-        return reply.code(404).send({ error: "Organization not found" });
+        throw new NotFoundError("Organization");
       }
 
       return reply.send({ message: "Organization deleted successfully" });

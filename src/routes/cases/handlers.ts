@@ -66,7 +66,10 @@ export async function createCaseHandler(
   const data = createCaseSchema.parse(body as CreateCaseInput);
 
   if (typeof scopedClientId === "number") {
-    return reply.code(403).send({ message: "Client accounts cannot create cases" });
+    throw new ForbiddenError(
+      "Client accounts cannot create cases",
+      "AUTHZ_CLIENT_ACCOUNT_RESTRICTED"
+    );
   }
 
   const caseService = new CaseService(server.db);
@@ -185,7 +188,10 @@ export async function updateCaseHandler(
   const id = parseInt(params.id, 10);
 
   if (typeof scopedClientId === "number") {
-    return reply.code(403).send({ message: "Client accounts cannot update cases" });
+    throw new ForbiddenError(
+      "Client accounts cannot update cases",
+      "AUTHZ_CLIENT_ACCOUNT_RESTRICTED"
+    );
   }
   const data = updateCaseSchema.parse(body as UpdateCaseInput);
 
@@ -289,7 +295,10 @@ export async function deleteCaseHandler(
   const id = parseInt(params.id, 10);
 
   if (typeof scopedClientId === "number") {
-    return reply.code(403).send({ message: "Client accounts cannot delete cases" });
+    throw new ForbiddenError(
+      "Client accounts cannot delete cases",
+      "AUTHZ_CLIENT_ACCOUNT_RESTRICTED"
+    );
   }
 
   const caseService = new CaseService(server.db);

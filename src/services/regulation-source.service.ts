@@ -686,10 +686,15 @@ export class RegulationSourceService {
       return true;
     }
 
-    if (/^\.*\s*البوابة القانونية\s*loading\.{0,3}$/i.test(normalized)) {
+    // Exact loading-shell patterns (with optional leading dots/punctuation)
+    if (/^[\.\s​‏]*البوابة القانونية\s*loading\.{0,3}\s*$/i.test(normalized)) {
       return true;
     }
-    if (/^\.*\s*loading\.{0,3}$/i.test(normalized)) {
+    if (/^[\.\s​‏]*loading\.{0,3}\s*$/i.test(normalized)) {
+      return true;
+    }
+    // Catch other Nuxt SPA shell markers in short text
+    if (/^[\.\s​‏]*البوابة القانونية[\.\s]*$/i.test(normalized)) {
       return true;
     }
 
@@ -1831,11 +1836,19 @@ export class RegulationSourceService {
     }
 
     if (!selectedText && fallbackText) {
-      selectedText = fallbackText;
-      selectedHash = this.hashNormalizedText(fallbackText);
-      extractionMethod = "moj:summary_sections_fallback";
-      extractionStatus = this.aiClient ? "fallback_after_extraction" : "fallback_no_ai";
-      fallbackUsed = true;
+      if (this.isInvalidExtractedContent(fallbackText, null)) {
+        extractionAttempts.push({
+          mode: "summary_sections_fallback",
+          status: "ignored_invalid_fallback_content",
+          reason: "fallback_text_looks_like_loading_shell_or_blocked",
+        });
+      } else {
+        selectedText = fallbackText;
+        selectedHash = this.hashNormalizedText(fallbackText);
+        extractionMethod = "moj:summary_sections_fallback";
+        extractionStatus = this.aiClient ? "fallback_after_extraction" : "fallback_no_ai";
+        fallbackUsed = true;
+      }
     }
 
     if (!selectedText) {
@@ -1852,6 +1865,18 @@ export class RegulationSourceService {
 
     if (!selectedText || !selectedHash) {
       return this.aiClient ? "failed" : "skipped";
+    }
+
+    // Final safety guard: never persist content that looks like a loading
+    // placeholder or WAF block page, regardless of which extraction path
+    // produced it. This catches edge cases missed by individual tier checks
+    // and prevents storing garbage like ". البوابة القانونية Loading...".
+    if (this.isInvalidExtractedContent(selectedText, selectedRawHtml)) {
+      logger.warn(
+        { regulationId, extractionMethod, contentPreview: selectedText.slice(0, 120) },
+        "Final content guard rejected selected text — looks like portal shell or blocked page"
+      );
+      return "failed";
     }
 
     const contentChanged = (latestVersion?.contentHash || null) !== selectedHash;

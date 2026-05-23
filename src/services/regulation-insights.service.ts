@@ -15,6 +15,7 @@ import {
   type RegulationKeyDate,
 } from "./ai-client.service";
 import { NotFoundError, ValidationError } from "../utils/errors";
+import { isLoadingPlaceholder } from "../utils/content-validation";
 import { logger } from "../utils/logger";
 
 export type RegulationInsightsStateStatus =
@@ -152,7 +153,9 @@ export class RegulationInsightsService {
       throw new NotFoundError("Regulation");
     }
 
-    const latestVersion = await this.db.query.regulationVersions.findFirst({
+    // Fetch several recent versions to skip any whose content is a MOJ SPA
+    // loading placeholder (stored before the scraper's content guard existed).
+    const recentVersions = await this.db.query.regulationVersions.findMany({
       where: eq(regulationVersions.regulationId, regulationId),
       columns: {
         id: true,
@@ -162,7 +165,13 @@ export class RegulationInsightsService {
         sourceMetadata: true,
       },
       orderBy: [desc(regulationVersions.versionNumber)],
+      limit: 10,
     });
+
+    const latestVersion =
+      recentVersions.find((v) => v.content && !isLoadingPlaceholder(v.content)) ||
+      recentVersions[0] ||
+      null;
 
     return {
       regulation,

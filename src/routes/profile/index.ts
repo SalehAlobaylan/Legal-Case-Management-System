@@ -21,6 +21,7 @@ import {
     FastifySchema,
 } from "fastify";
 import { db } from "../../db/connection";
+import { NotFoundError, FileError } from "../../utils/errors";
 import { users } from "../../db/schema/users";
 import { userActivities } from "../../db/schema/user-activities";
 import { cases } from "../../db/schema/cases";
@@ -121,7 +122,7 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
                 .limit(1);
 
             if (!result.length) {
-                return reply.code(404).send({ error: "User not found" });
+                throw new NotFoundError("User");
             }
 
             const userData = result[0];
@@ -205,7 +206,7 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
                 .returning();
 
             if (!updated.length) {
-                return reply.code(404).send({ error: "User not found" });
+                throw new NotFoundError("User");
             }
 
             const updatedUser = updated[0];
@@ -250,13 +251,14 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
             const data = await request.file();
 
             if (!data) {
-                return reply.code(400).send({ error: "No file uploaded" });
+                throw new FileError("FILE_REQUIRED");
             }
 
             if (!ALLOWED_MIME_TYPES.includes(data.mimetype)) {
-                return reply.code(400).send({
-                    error: "Invalid file type. Allowed: JPEG, PNG, GIF, WebP",
-                });
+                throw new FileError(
+                    "FILE_UNSUPPORTED_TYPE",
+                    { allowed: ALLOWED_MIME_TYPES, received: data.mimetype }
+                );
             }
 
             const ext = data.filename.split(".").pop() || "jpg";

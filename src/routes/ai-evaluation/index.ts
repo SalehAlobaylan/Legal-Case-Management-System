@@ -15,6 +15,7 @@ import {
   type CaseType,
 } from "../../db/schema";
 import { db } from "../../db/connection";
+import { ValidationError } from "../../utils/errors";
 import { AIClientService } from "../../services/ai-client.service";
 import { RegulationRagService } from "../../services/regulation-rag.service";
 
@@ -314,7 +315,7 @@ const aiEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           .where(eq(aiEvaluationLabels.organizationId, req.user.orgId));
 
         if (!labels.length) {
-          throw new Error("No evaluation labels configured");
+          throw new ValidationError("No evaluation labels configured");
         }
 
         const labelsByCase = new Map<number, Set<number>>();
@@ -332,7 +333,7 @@ const aiEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
             : allCaseIds;
 
         if (!selectedCaseIds.length) {
-          throw new Error("No labeled cases selected");
+          throw new ValidationError("No labeled cases selected");
         }
 
         const caseRows = await db

@@ -1,5 +1,6 @@
 import { env } from "../config/env";
 import { logger } from "../utils/logger";
+import { ExternalServiceError } from "../utils/errors";
 
 export interface EmbeddingResponse {
   embeddings: number[][];
@@ -386,9 +387,18 @@ export class AIClientService {
     url: string,
     init: RequestInit,
     context: string,
-    options?: { timeoutMs?: number; maxRetries?: number }
+    options?: { timeoutMs?: number; maxRetries?: number; requestId?: string }
   ): Promise<Response> {
     const maxRetries = Math.max(0, options?.maxRetries ?? 2);
+
+    // Forward the request id to the AI service so its handlers can echo it
+    // back as `traceId` for end-to-end log correlation.
+    const headersWithTrace = options?.requestId
+      ? {
+          ...(init.headers as Record<string, string> | undefined),
+          "X-Request-Id": options.requestId,
+        }
+      : init.headers;
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       try {
@@ -402,6 +412,7 @@ export class AIClientService {
 
         const response = await fetch(url, {
           ...init,
+          headers: headersWithTrace,
           signal: this.signal(attemptTimeoutMs),
         });
 
@@ -427,7 +438,34 @@ export class AIClientService {
         }
 
         const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(`AI service error (${context}): ${response.status} ${errorText}`);
+        // Try to parse the AI service's canonical error envelope and map its
+        // code into our EXTERNAL_AI_* family so the frontend gets a typed code.
+        let upstreamCode: string | undefined;
+        let upstreamMessage: string | undefined;
+        try {
+          const parsed = JSON.parse(errorText) as {
+            error?: { code?: string; message?: string };
+          };
+          upstreamCode = parsed.error?.code;
+          upstreamMessage = parsed.error?.message;
+        } catch {
+          /* not JSON — keep raw text */
+        }
+        const mappedCode =
+          upstreamCode === "AI_LLM_TIMEOUT"
+            ? "EXTERNAL_AI_TIMEOUT"
+            : upstreamCode === "AI_MODEL_LOADING"
+              ? "EXTERNAL_AI_UNAVAILABLE"
+              : response.status >= 500
+                ? "EXTERNAL_AI_UNAVAILABLE"
+                : "EXTERNAL_AI_BAD_RESPONSE";
+        throw new ExternalServiceError("ai", mappedCode, {
+          context,
+          status: response.status,
+          upstreamCode,
+          upstreamMessage,
+          body: upstreamCode ? undefined : errorText.slice(0, 500),
+        });
       } catch (error) {
         if (attempt < maxRetries && this.isRetryableError(error)) {
           logger.warn(
@@ -446,7 +484,10 @@ export class AIClientService {
       }
     }
 
-    throw new Error(`AI service error (${context}): request failed after retries`);
+    throw new ExternalServiceError("ai", "EXTERNAL_AI_TIMEOUT", {
+      context,
+      reason: "request failed after retries",
+    });
   }
 
   /**

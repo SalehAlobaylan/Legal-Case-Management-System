@@ -14,7 +14,7 @@ import {
   invoices,
   organizations,
 } from "../db/schema";
-import { NotFoundError, ForbiddenError } from "../utils/errors";
+import { NotFoundError, ForbiddenError, ConflictError } from "../utils/errors";
 
 export class BillingService {
   constructor(private db: Database) {}
@@ -146,7 +146,10 @@ export class BillingService {
     }
 
     if (!plan.isActive) {
-      throw new Error("Billing plan is not available");
+      throw new ConflictError(
+        "Billing plan is not available",
+        "BILLING_PLAN_UNAVAILABLE"
+      );
     }
 
     // Check for existing active subscription
@@ -217,11 +220,14 @@ export class BillingService {
     });
 
     if (!subscription) {
-      throw new NotFoundError("Subscription");
+      throw new NotFoundError("Subscription", "BILLING_SUBSCRIPTION_NOT_FOUND");
     }
 
     if (subscription.cancelAtPeriodEnd) {
-      throw new Error("Subscription already scheduled for cancellation");
+      throw new ConflictError(
+        "Subscription already scheduled for cancellation",
+        "BILLING_ALREADY_CANCELLED"
+      );
     }
 
     const [updated] = await this.db
