@@ -37,6 +37,7 @@ import { RegulationMonitorService } from "../../services/regulation-monitor.serv
 import { RegulationSourceService } from "../../services/regulation-source.service";
 import { RegulationInsightsService } from "../../services/regulation-insights.service";
 import { RegulationAmendmentImpactService } from "../../services/regulation-amendment-impact.service";
+import { AuditLogService } from "../../services/audit-log.service";
 import { logger } from "../../utils/logger";
 
 type AuthenticatedFastifyInstance = FastifyInstance & {
@@ -342,6 +343,22 @@ const regulationsRoutes: FastifyPluginAsync = async (fastify) => {
         dryRun: Boolean(body?.dryRun),
         triggerSource: "manual_api",
         triggeredByUserId: user.id,
+      });
+
+      await new AuditLogService(app.db, request.log).log({
+        organizationId: user.orgId,
+        actorUserId: user.id,
+        action: "monitor.run",
+        targetType: "regulation_monitor",
+        targetId: body?.regulationId ?? "all",
+        payload: {
+          regulationId: body?.regulationId ?? null,
+          dryRun: Boolean(body?.dryRun),
+          scanned: result.scanned,
+          changed: result.changed,
+          versionsCreated: result.versionsCreated,
+          failed: result.failed,
+        },
       });
 
       return reply.send(result);

@@ -36,13 +36,18 @@ import { userActivities } from "../../db/schema/user-activities";
 import { caseRegulationLinks } from "../../db/schema/case-regulation-links";
 import { regulationVersions } from "../../db/schema/regulation-versions";
 import { regulations } from "../../db/schema/regulations";
+import { regulationMonitorRuns } from "../../db/schema/regulation-monitor-runs";
+import { adminDashboardSettings } from "../../db/schema/admin-dashboard-settings";
 import { CaseService } from "../../services/case.service";
 import {
   AuditLogService,
   auditActions,
   type AuditAction,
 } from "../../services/audit-log.service";
+import { AIClientService } from "../../services/ai-client.service";
+import { RegulationMonitorService } from "../../services/regulation-monitor.service";
 import { requireAdmin } from "../../lib/require-admin";
+import { registerAiIntelligenceRoutes } from "./ai-intelligence";
 
 /*
  * bucketHearing
@@ -81,6 +86,87 @@ function daysUntil(d: Date, now: Date): number {
   return Math.round((a.getTime() - b.getTime()) / 86_400_000);
 }
 
+const dashboardSettingsSchema = z.object({
+  staleCaseDays: z.number().int().min(1).max(365),
+  hearingSoonDays: z.number().int().min(1).max(90),
+  workloadHighOpenCases: z.number().int().min(1).max(500),
+  aiReviewHighCount: z.number().int().min(1).max(1000),
+  monitorStaleMinutes: z.number().int().min(5).max(43_200),
+});
+
+type DashboardSettingsInput = z.infer<typeof dashboardSettingsSchema>;
+
+async function getOrCreateDashboardSettings(organizationId: number) {
+  const [existing] = await db
+    .select()
+    .from(adminDashboardSettings)
+    .where(eq(adminDashboardSettings.organizationId, organizationId))
+    .limit(1);
+  if (existing) return existing;
+
+  const [created] = await db
+    .insert(adminDashboardSettings)
+    .values({ organizationId })
+    .onConflictDoNothing()
+    .returning();
+  if (created) return created;
+
+  const [row] = await db
+    .select()
+    .from(adminDashboardSettings)
+    .where(eq(adminDashboardSettings.organizationId, organizationId))
+    .limit(1);
+  if (!row) {
+    throw new Error("Failed to initialize admin dashboard settings");
+  }
+  return row;
+}
+
+function serializeDashboardSettings(settings: {
+  organizationId: number;
+  staleCaseDays: number;
+  hearingSoonDays: number;
+  workloadHighOpenCases: number;
+  aiReviewHighCount: number;
+  monitorStaleMinutes: number;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    organizationId: settings.organizationId,
+    staleCaseDays: settings.staleCaseDays,
+    hearingSoonDays: settings.hearingSoonDays,
+    workloadHighOpenCases: settings.workloadHighOpenCases,
+    aiReviewHighCount: settings.aiReviewHighCount,
+    monitorStaleMinutes: settings.monitorStaleMinutes,
+    createdAt: settings.createdAt,
+    updatedAt: settings.updatedAt,
+  };
+}
+
+async function getAIHealthSummary() {
+  try {
+    const raw = await new AIClientService().getEmbeddingsHealth();
+    return {
+      ready: !raw.warming_up,
+      warmingUp: Boolean(raw.warming_up),
+      fallbackActive: Boolean(raw.fallback_active),
+      message: raw.warming_up
+        ? "AI assistant is warming up."
+        : raw.fallback_active
+          ? "AI assistant is using the backup service."
+          : null,
+    };
+  } catch {
+    return {
+      ready: false,
+      warmingUp: false,
+      fallbackActive: false,
+      message: "AI assistant status unavailable.",
+    };
+  }
+}
+
 type RequestWithUser = FastifyRequest & {
   user: { id: string; email: string; role: string; orgId: number };
 };
@@ -93,6 +179,388 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify as AuthenticatedFastifyInstance;
 
   app.addHook("onRequest", app.authenticate);
+
+  fastify.get(
+    "/dashboard-settings",
+    {
+      schema: {
+        description: "Admin dashboard threshold settings",
+        tags: ["admin"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      if (!requireAdmin(request, reply)) return;
+      const settings = await getOrCreateDashboardSettings(user.orgId);
+      return reply.send({ settings: serializeDashboardSettings(settings) });
+    }
+  );
+
+  fastify.put(
+    "/dashboard-settings",
+    {
+      schema: {
+        description: "Update admin dashboard threshold settings",
+        tags: ["admin"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user, body } = request as RequestWithUser & { body: unknown };
+      if (!requireAdmin(request, reply)) return;
+      const data = dashboardSettingsSchema.parse(body) satisfies DashboardSettingsInput;
+
+      const auditService = new AuditLogService(db, request.log);
+      const updated = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .insert(adminDashboardSettings)
+          .values({
+            organizationId: user.orgId,
+            ...data,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: adminDashboardSettings.organizationId,
+            set: {
+              ...data,
+              updatedAt: new Date(),
+            },
+          })
+          .returning();
+        await auditService.logTx(tx, {
+          organizationId: user.orgId,
+          actorUserId: user.id,
+          action: "admin.dashboard_settings.update",
+          targetType: "admin_dashboard_settings",
+          targetId: user.orgId,
+          payload: data,
+        });
+        return row;
+      });
+
+      return reply.send({ settings: serializeDashboardSettings(updated) });
+    }
+  );
+
+  fastify.get(
+    "/command-center",
+    {
+      schema: {
+        description: "Admin executive command center bundled payload",
+        tags: ["admin"],
+        security: [{ bearerAuth: [] }],
+      } as FastifySchema,
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { user } = request as RequestWithUser;
+      if (!requireAdmin(request, reply)) return;
+
+      const settings = await getOrCreateDashboardSettings(user.orgId);
+      const staleSince = new Date(
+        Date.now() - settings.staleCaseDays * 86_400_000
+      );
+      const recentRegSince = new Date(Date.now() - 7 * 86_400_000);
+
+      const regUpdatesWhere = and(
+        eq(cases.organizationId, user.orgId),
+        notInArray(cases.status, CLOSED_STATUSES),
+        gt(regulationVersions.fetchedAt, recentRegSince)
+      );
+
+      const [
+        [aggregate],
+        workload,
+        unassignedCases,
+        recentActivity,
+        hearingRows,
+        staleCases,
+        [staleCountRow],
+        awaitingReview,
+        regUpdates,
+        [regUpdatesCountRow],
+        monitorRuns,
+        monitorHealth,
+        aiHealth,
+      ] = await Promise.all([
+        db
+          .select({
+            total: count(),
+            open: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'open')`,
+            inProgress: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'in_progress')`,
+            pendingHearing: sql<number>`COUNT(*) FILTER (WHERE ${cases.status} = 'pending_hearing')`,
+            closed: sql<number>`COUNT(*) FILTER (WHERE ${inArray(cases.status, CLOSED_STATUSES)})`,
+            unassigned: sql<number>`COUNT(*) FILTER (WHERE ${cases.assignedLawyerId} IS NULL)`,
+          })
+          .from(cases)
+          .where(eq(cases.organizationId, user.orgId)),
+        db
+          .select({
+            lawyerId: users.id,
+            fullName: users.fullName,
+            email: users.email,
+            role: users.role,
+            totalCases: count(cases.id),
+            openCases: sql<number>`COUNT(${cases.id}) FILTER (WHERE ${notInArray(cases.status, CLOSED_STATUSES)})`,
+          })
+          .from(users)
+          .leftJoin(
+            cases,
+            and(
+              eq(cases.assignedLawyerId, users.id),
+              eq(cases.organizationId, user.orgId)
+            )
+          )
+          .where(eq(users.organizationId, user.orgId))
+          .groupBy(users.id, users.fullName, users.email, users.role)
+          .orderBy(desc(sql<number>`COUNT(${cases.id})`)),
+        db.query.cases.findMany({
+          where: and(
+            eq(cases.organizationId, user.orgId),
+            isNull(cases.assignedLawyerId)
+          ),
+          orderBy: [desc(cases.createdAt)],
+          limit: 25,
+        }),
+        db
+          .select({
+            id: userActivities.id,
+            userId: userActivities.userId,
+            userName: users.fullName,
+            type: userActivities.type,
+            action: userActivities.action,
+            title: userActivities.title,
+            referenceId: userActivities.referenceId,
+            createdAt: userActivities.createdAt,
+          })
+          .from(userActivities)
+          .innerJoin(users, eq(userActivities.userId, users.id))
+          .where(eq(users.organizationId, user.orgId))
+          .orderBy(desc(userActivities.createdAt))
+          .limit(20),
+        db.query.cases.findMany({
+          where: and(
+            eq(cases.organizationId, user.orgId),
+            isNotNull(cases.nextHearing),
+            notInArray(cases.status, CLOSED_STATUSES)
+          ),
+          with: {
+            assignedLawyer: { columns: { id: true, fullName: true, email: true } },
+          },
+          orderBy: [asc(cases.nextHearing)],
+          limit: 500,
+        }),
+        db.query.cases.findMany({
+          where: and(
+            eq(cases.organizationId, user.orgId),
+            notInArray(cases.status, CLOSED_STATUSES),
+            lt(cases.updatedAt, staleSince)
+          ),
+          orderBy: [asc(cases.updatedAt)],
+          with: {
+            assignedLawyer: { columns: { id: true, fullName: true, email: true } },
+          },
+          limit: 10,
+        }),
+        db
+          .select({ c: count() })
+          .from(cases)
+          .where(
+            and(
+              eq(cases.organizationId, user.orgId),
+              notInArray(cases.status, CLOSED_STATUSES),
+              lt(cases.updatedAt, staleSince)
+            )
+          ),
+        db
+          .select({
+            caseId: cases.id,
+            caseNumber: cases.caseNumber,
+            title: cases.title,
+            unreviewed: count(caseRegulationLinks.id),
+          })
+          .from(caseRegulationLinks)
+          .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
+          .where(
+            and(
+              eq(cases.organizationId, user.orgId),
+              eq(caseRegulationLinks.verified, false)
+            )
+          )
+          .groupBy(cases.id, cases.caseNumber, cases.title)
+          .orderBy(desc(count(caseRegulationLinks.id)))
+          .limit(10),
+        db
+          .select({
+            caseId: cases.id,
+            caseNumber: cases.caseNumber,
+            title: cases.title,
+            regulationId: regulations.id,
+            regulationTitle: regulations.title,
+            fetchedAt: regulationVersions.fetchedAt,
+          })
+          .from(regulationVersions)
+          .innerJoin(
+            caseRegulationLinks,
+            eq(caseRegulationLinks.regulationId, regulationVersions.regulationId)
+          )
+          .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
+          .innerJoin(regulations, eq(regulations.id, regulationVersions.regulationId))
+          .where(regUpdatesWhere)
+          .orderBy(desc(regulationVersions.fetchedAt))
+          .limit(10),
+        db
+          .select({ c: count() })
+          .from(regulationVersions)
+          .innerJoin(
+            caseRegulationLinks,
+            eq(caseRegulationLinks.regulationId, regulationVersions.regulationId)
+          )
+          .innerJoin(cases, eq(caseRegulationLinks.caseId, cases.id))
+          .where(regUpdatesWhere),
+        db
+          .select()
+          .from(regulationMonitorRuns)
+          .orderBy(desc(regulationMonitorRuns.startedAt))
+          .limit(8),
+        new RegulationMonitorService(db).getHealthSummary(),
+        getAIHealthSummary(),
+      ]);
+
+      const now = new Date();
+      const hearings: Record<HearingBucket, Array<{
+        id: number;
+        caseNumber: string;
+        title: string;
+        status: string;
+        caseType: string;
+        nextHearing: Date | null;
+        daysUntil: number;
+        assignedLawyerId: string | null;
+        assignedLawyer: { id: string; fullName: string | null; email: string } | null;
+      }>> = { overdue: [], thisWeek: [], nextWeek: [], later: [] };
+
+      for (const c of hearingRows) {
+        if (!c.nextHearing) continue;
+        const b = bucketHearing(c.nextHearing as unknown as Date, now);
+        hearings[b].push({
+          id: c.id,
+          caseNumber: c.caseNumber,
+          title: c.title,
+          status: c.status,
+          caseType: c.caseType,
+          nextHearing: c.nextHearing as unknown as Date,
+          daysUntil: daysUntil(c.nextHearing as unknown as Date, now),
+          assignedLawyerId: c.assignedLawyerId,
+          assignedLawyer: c.assignedLawyer ?? null,
+        });
+      }
+
+      const totalAwaiting = awaitingReview.reduce(
+        (sum, r) => sum + Number(r.unreviewed ?? 0),
+        0
+      );
+
+      const topActions = [
+        ...hearings.overdue.slice(0, 3).map((h) => ({
+          id: `hearing-${h.id}`,
+          type: "overdue_hearing",
+          severity: "critical",
+          title: `${h.caseNumber} — ${h.title}`,
+          subtitle: `${Math.abs(h.daysUntil)} days overdue`,
+          href: `/cases/${h.id}`,
+        })),
+        ...unassignedCases.slice(0, 3).map((c) => ({
+          id: `unassigned-${c.id}`,
+          type: "unassigned_case",
+          severity: "warning",
+          title: `${c.caseNumber} — ${c.title}`,
+          subtitle: "Unassigned case",
+          href: `/cases/${c.id}`,
+        })),
+        ...awaitingReview.slice(0, 3).map((r) => ({
+          id: `ai-${r.caseId}`,
+          type: "ai_review",
+          severity:
+            Number(r.unreviewed ?? 0) >= settings.aiReviewHighCount
+              ? "warning"
+              : "info",
+          title: `${r.caseNumber} — ${r.title}`,
+          subtitle: `${Number(r.unreviewed ?? 0)} AI links awaiting review`,
+          href: `/cases/${r.caseId}/linking`,
+        })),
+      ].slice(0, 8);
+
+      return reply.send({
+        settings: serializeDashboardSettings(settings),
+        caseCounts: {
+          total: Number(aggregate?.total ?? 0),
+          open: Number(aggregate?.open ?? 0),
+          inProgress: Number(aggregate?.inProgress ?? 0),
+          pendingHearing: Number(aggregate?.pendingHearing ?? 0),
+          closed: Number(aggregate?.closed ?? 0),
+          unassigned: Number(aggregate?.unassigned ?? 0),
+        },
+        workload: workload.map((row) => ({
+          lawyerId: row.lawyerId,
+          fullName: row.fullName,
+          email: row.email,
+          role: row.role,
+          totalCases: Number(row.totalCases ?? 0),
+          openCases: Number(row.openCases ?? 0),
+          highWorkload:
+            Number(row.openCases ?? 0) >= settings.workloadHighOpenCases,
+        })),
+        unassignedCases,
+        recentActivity,
+        lawyerCount: workload.length,
+        hearings: {
+          ...hearings,
+          counts: {
+            overdue: hearings.overdue.length,
+            thisWeek: hearings.thisWeek.length,
+            nextWeek: hearings.nextWeek.length,
+            later: hearings.later.length,
+          },
+        },
+        risk: {
+          stale: {
+            count: Number(staleCountRow?.c ?? 0),
+            items: staleCases.map((c) => ({
+              id: c.id,
+              caseNumber: c.caseNumber,
+              title: c.title,
+              updatedAt: c.updatedAt,
+              assignedLawyer: c.assignedLawyer ?? null,
+            })),
+          },
+          awaitingReview: {
+            count: totalAwaiting,
+            items: awaitingReview.map((r) => ({
+              caseId: r.caseId,
+              caseNumber: r.caseNumber,
+              title: r.title,
+              unreviewed: Number(r.unreviewed ?? 0),
+            })),
+          },
+          regulationUpdates: {
+            count: Number(regUpdatesCountRow?.c ?? 0),
+            items: regUpdates,
+          },
+          topActions,
+        },
+        aiHealth,
+        monitor: {
+          health: monitorHealth,
+          runs: monitorRuns,
+          failedRuns24h: monitorHealth.failedRuns24h,
+          stale:
+            monitorHealth.minutesSinceLastRun !== null &&
+            monitorHealth.minutesSinceLastRun > settings.monitorStaleMinutes,
+        },
+      });
+    }
+  );
 
   /**
    * GET /api/admin/stats
@@ -639,6 +1107,9 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   );
+
+  // AI Intelligence sub-routes (GET /ai-intelligence/summary, POST refresh, etc.)
+  await registerAiIntelligenceRoutes(fastify);
 };
 
 export default adminRoutes;

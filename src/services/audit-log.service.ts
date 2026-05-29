@@ -33,8 +33,14 @@ export const auditActions = [
   "announcement.create",
   "announcement.retire",
   "announcement.delete",
+  "case.assign",
   "case.bulk_assign",
   "member.leave_toggle",
+  "monitor.run",
+  "admin.dashboard_settings.update",
+  "admin.ai_profile.refresh",
+  "admin.ai_org_snapshot.refresh",
+  "admin.ai_evaluation.run",
 ] as const;
 export type AuditAction = (typeof auditActions)[number];
 

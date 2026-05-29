@@ -302,6 +302,130 @@ export interface RegulationAmendmentImpactResponse {
   error_code?: string | null;
 }
 
+// ── Admin AI intelligence ─────────────────────────────────────────────────────
+
+export interface CaseRiskSignalInput {
+  overdueHearing?: boolean;
+  daysOverdue?: number;
+  hearingThisWeek?: boolean;
+  stale?: boolean;
+  daysStale?: number;
+  staleThresholdDays?: number;
+  unassigned?: boolean;
+  unverifiedLinks?: number;
+  recentRegulationUpdate?: boolean;
+  documentRisk?: boolean;
+  failedExtraction?: boolean;
+  lawyerOverloaded?: boolean;
+  hasActivity?: boolean;
+  hasDocuments?: boolean;
+}
+
+export interface CaseRiskProfileInput {
+  caseId: number;
+  caseNumber?: string | null;
+  title?: string | null;
+  caseType?: string | null;
+  signals: CaseRiskSignalInput;
+  aiHealthy?: boolean;
+  languageCode?: "ar" | "en";
+  caseSummary?: string | null;
+}
+
+export interface CaseRiskEvidence {
+  signal: string;
+  label: string;
+  severity: string;
+  contribution: number;
+  detail?: string | null;
+}
+
+export interface CaseRiskRecommendedAction {
+  action: string;
+  label: string;
+  target?: string | null;
+}
+
+export interface CaseRiskProfileResponse {
+  status: "ok" | "error";
+  case_id: number;
+  score: number;
+  urgency: string;
+  confidence: string;
+  signals: string[];
+  evidence: CaseRiskEvidence[];
+  recommended_actions: CaseRiskRecommendedAction[];
+  rationale?: string | null;
+  method: string;
+  warnings?: string[];
+  error_code?: string | null;
+}
+
+export interface OrgIntelligenceCaseInput {
+  caseId: number;
+  caseNumber?: string | null;
+  title?: string | null;
+  score: number;
+  urgency: string;
+  topReason?: string | null;
+}
+
+export interface OrgIntelligenceSummaryInput {
+  organizationId: number;
+  totalActiveCases: number;
+  urgencyCounts: Record<string, number>;
+  averageScore: number;
+  topCases: OrgIntelligenceCaseInput[];
+  overloadedLawyers?: number;
+  unassignedCases?: number;
+  documentRiskCases?: number;
+  regulationImpactCases?: number;
+  aiHealthy?: boolean;
+  languageCode?: "ar" | "en";
+}
+
+export interface OrgIntelligenceSummaryResponse {
+  status: "ok" | "error";
+  headline: string;
+  bullets: string[];
+  aggregate_risk: Record<string, unknown>;
+  workload_signals: Record<string, unknown>;
+  confidence: string;
+  method: string;
+  warnings?: string[];
+  error_code?: string | null;
+}
+
+export interface ReviewPrioritizationItemInput {
+  caseId: number;
+  caseNumber?: string | null;
+  title?: string | null;
+  unverifiedLinks: number;
+  maxLinkScore?: number | null;
+  evidenceCount?: number;
+  documentSupport?: number;
+  recentRegulationUpdate?: boolean;
+  caseRiskScore?: number | null;
+}
+
+export interface ReviewPrioritizationItem {
+  case_id: number;
+  case_number?: string | null;
+  title?: string | null;
+  priority_score: number;
+  unverified_links: number;
+  reasons: string[];
+}
+
+export interface ReviewPrioritizationResponse {
+  status: "ok" | "error";
+  items: ReviewPrioritizationItem[];
+  method: string;
+  confidence: string;
+  warnings?: string[];
+  error_code?: string | null;
+}
+
 /**
  * AIClientService
  *
@@ -822,6 +946,140 @@ export class AIClientService {
         },
         "Failed to generate regulation amendment impact from AI service"
       );
+      throw error;
+    }
+  }
+
+  /**
+   * generateCaseRiskProfile
+   *
+   * - Sends pre-assembled per-case signals to the microservice, which owns the
+   *   deterministic scoring (+ optional LLM rationale).
+   * - Throws on failure; the caller (AdminAIIntelligenceService) falls back to a
+   *   degraded backend-computed score.
+   */
+  async generateCaseRiskProfile(
+    input: CaseRiskProfileInput
+  ): Promise<CaseRiskProfileResponse> {
+    const s = input.signals;
+    try {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/admin/case-risk-profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: input.caseId,
+          case_number: input.caseNumber ?? null,
+          title: input.title ?? null,
+          case_type: input.caseType ?? null,
+          ai_healthy: input.aiHealthy ?? true,
+          language_code: input.languageCode || "ar",
+          case_summary: input.caseSummary ?? null,
+          signals: {
+            overdue_hearing: s.overdueHearing ?? false,
+            days_overdue: s.daysOverdue ?? 0,
+            hearing_this_week: s.hearingThisWeek ?? false,
+            stale: s.stale ?? false,
+            days_stale: s.daysStale ?? 0,
+            stale_threshold_days: s.staleThresholdDays ?? 14,
+            unassigned: s.unassigned ?? false,
+            unverified_links: s.unverifiedLinks ?? 0,
+            recent_regulation_update: s.recentRegulationUpdate ?? false,
+            document_risk: s.documentRisk ?? false,
+            failed_extraction: s.failedExtraction ?? false,
+            lawyer_overloaded: s.lawyerOverloaded ?? false,
+            has_activity: s.hasActivity ?? true,
+            has_documents: s.hasDocuments ?? true,
+          },
+        }),
+      }, "admin/case-risk-profile", { timeoutMs: Math.max(this.timeoutMs, 60000) });
+
+      return (await response.json()) as CaseRiskProfileResponse;
+    } catch (error) {
+      logger.error(
+        { err: error, caseId: input.caseId },
+        "Failed to generate case risk profile from AI service"
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * generateOrgIntelligenceSummary
+   *
+   * - Sends aggregate org-level signals; the microservice returns an executive
+   *   summary (deterministic headline/bullets + optional LLM narrative).
+   */
+  async generateOrgIntelligenceSummary(
+    input: OrgIntelligenceSummaryInput
+  ): Promise<OrgIntelligenceSummaryResponse> {
+    try {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/admin/org-intelligence-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organization_id: input.organizationId,
+          total_active_cases: input.totalActiveCases,
+          urgency_counts: input.urgencyCounts,
+          average_score: input.averageScore,
+          overloaded_lawyers: input.overloadedLawyers ?? 0,
+          unassigned_cases: input.unassignedCases ?? 0,
+          document_risk_cases: input.documentRiskCases ?? 0,
+          regulation_impact_cases: input.regulationImpactCases ?? 0,
+          ai_healthy: input.aiHealthy ?? true,
+          language_code: input.languageCode || "ar",
+          top_cases: input.topCases.map((c) => ({
+            case_id: c.caseId,
+            case_number: c.caseNumber ?? null,
+            title: c.title ?? null,
+            score: c.score,
+            urgency: c.urgency,
+            top_reason: c.topReason ?? null,
+          })),
+        }),
+      }, "admin/org-intelligence-summary", { timeoutMs: Math.max(this.timeoutMs, 60000) });
+
+      return (await response.json()) as OrgIntelligenceSummaryResponse;
+    } catch (error) {
+      logger.error(
+        { err: error, organizationId: input.organizationId },
+        "Failed to generate org intelligence summary from AI service"
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * prioritizeReview
+   *
+   * - Ranks unverified AI links across cases by review priority (deterministic).
+   */
+  async prioritizeReview(
+    items: ReviewPrioritizationItemInput[],
+    languageCode: "ar" | "en" = "ar"
+  ): Promise<ReviewPrioritizationResponse> {
+    try {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/admin/review-prioritization`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          language_code: languageCode,
+          items: items.map((it) => ({
+            case_id: it.caseId,
+            case_number: it.caseNumber ?? null,
+            title: it.title ?? null,
+            unverified_links: it.unverifiedLinks,
+            max_link_score: it.maxLinkScore ?? null,
+            evidence_count: it.evidenceCount ?? 0,
+            document_support: it.documentSupport ?? 0,
+            recent_regulation_update: it.recentRegulationUpdate ?? false,
+            case_risk_score: it.caseRiskScore ?? null,
+          })),
+        }),
+      }, "admin/review-prioritization", { timeoutMs: Math.max(this.timeoutMs, 60000) });
+
+      return (await response.json()) as ReviewPrioritizationResponse;
+    } catch (error) {
+      logger.error({ err: error }, "Failed to prioritize review from AI service");
       throw error;
     }
   }

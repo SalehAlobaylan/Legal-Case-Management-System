@@ -38,3 +38,6 @@ export * from "./integrations";
 export * from "./user-permission-grants";
 export * from "./org-announcements";
 export * from "./admin-audit-log";
+export * from "./admin-dashboard-settings";
+export * from "./admin-ai-case-profiles";
+export * from "./admin-ai-org-snapshots";

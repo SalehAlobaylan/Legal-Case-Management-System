@@ -232,6 +232,20 @@
       "when": 1779446538828,
       "tag": "0032_grey_bill_hollister",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1779728400000,
+      "tag": "0033_admin_dashboard_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1780052463712,
+      "tag": "0034_short_wrecker",
+      "breakpoints": true
     }
   ]
 }

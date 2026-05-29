@@ -391,6 +391,19 @@ export async function assignCaseHandler(
     updated.id
   );
 
+  await new AuditLogService(server.db, request.log).log({
+    organizationId: user.orgId,
+    actorUserId: user.id,
+    action: "case.assign",
+    targetType: "case",
+    targetId: updated.id,
+    payload: {
+      assignedLawyerId,
+      previousAssignedLawyerId: existing.assignedLawyerId,
+      caseNumber: updated.caseNumber,
+    },
+  });
+
   return reply.send({ case: updated });
 }
 
